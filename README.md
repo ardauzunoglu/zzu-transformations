@@ -215,9 +215,37 @@ where its ~3× overhead over BFGS purchases a real RMSE improvement
 
 ### Does the screening step pay for itself? Warm-start vs cold-start BFGS
 
-Same dataset, same target tolerance, two starting points: a data-driven
-heuristic (cold) vs the transformation-derived theta from ZZU's screening
-(warm). Mean over 10 splits:
+The two strategies are run with **identical** model, dataset, optimizer,
+and convergence tolerance. The only difference is the initial parameter
+vector handed to BFGS.
+
+**Cold start (baseline).** A *data-driven heuristic* derived directly
+from the observed `(X, y)` without fitting any model. For the exponential
+datasets `y = a · exp(b · x)`:
+```
+theta_cold = [a0, b0]   where   a0 = max(min(y), 1e-3),   b0 = 0.1
+```
+This is intentionally cheap: it uses only summary statistics and a fixed
+small rate. It's what someone would code if they didn't know any better.
+
+**Warm start (ZZU's contribution).** Run Step 1 of ZZU first — fit the
+log-linearized OLS `log(y) = β₀ + β₁·x` on the training data — then
+*invert* the linear coefficients back into nonlinear parameters via the
+user-supplied `coeff_to_init`:
+```
+theta_warm = [exp(β0), β1]    # the analytic inverse of log-linearization
+```
+This costs one extra OLS solve (~0.1 ms) but produces an init that — when
+the linearization assumption is correct — already lies near the SSE
+optimum.
+
+**Concretely** on `exponential_multiplicative` (true params `a = 2`, `b = 0.7`):
+| Init | a₀ | b₀ | Distance to truth (L²) |
+|------|----:|----:|------------------------:|
+| cold | ~2.0 | 0.10 | ~0.60 (driven by b₀) |
+| warm | ~2.0 | ~0.69 | ~0.01 |
+
+Mean over 10 splits, with the same BFGS settings either way:
 
 | Dataset | Init | Iterations | model_fn calls | Time (ms) |
 |---------|------|-----------:|---------------:|----------:|
@@ -273,6 +301,6 @@ is used. This is exactly the diagnostic-guided spirit of the workflow.
 
 ## Contribution Summary
 
-- **Alvin Zhang** — nonlinear baselines (GD, Gauss-Newton, BFGS), ZZU hybrid implementation, report writing
+- **Alvin Zhang** — nonlinear baselines (GD, Gauss-Newton, BFGS), ZZU hybrid implementation, cost analysis, report writing
 - **Wynn Zhao** — real-world dataset selection and preprocessing, evaluation and visualization, ZZU development
 - **Arda Uzunoglu** — literature review, toy examples, introduction and related work, synthetic experiments, ZZU development
