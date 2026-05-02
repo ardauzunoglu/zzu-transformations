@@ -29,11 +29,16 @@ zzu-transformations/
 ├── toy_data.ipynb                 # Dataset documentation notebook
 ├── test.py                        # End-to-end validation script
 ├── run_comparison.py              # Full benchmark across all 5 datasets
-├── comparison_results/            # Outputs of run_comparison.py
-│   ├── raw_results.csv            #   long-form: 1 row per (dataset, method, seed)
+├── cost_analysis.py               # Time / iterations / model_fn calls
+├── comparison_results/            # Outputs of run_comparison.py + cost_analysis.py
+│   ├── raw_results.csv            #   accuracy: 1 row per (dataset, method, seed)
 │   ├── summary_by_method.csv      #   mean ± std RMSE / R² / convergence
 │   ├── rmse_by_method.png         #   per-dataset bar chart, methods sorted
-│   └── fit_overlay.png            #   best-fit overlays for the 4 1D datasets
+│   ├── fit_overlay.png            #   best-fit overlays for the 4 1D datasets
+│   ├── cost_results.csv           #   cost: fit_time_sec, n_iter, n_model_evals
+│   ├── cost_summary.csv           #   mean cost metrics per (dataset, method)
+│   ├── cost_pareto.png            #   RMSE vs fit-time Pareto (log-log)
+│   └── warm_vs_cold.png           #   BFGS warm-start vs cold-start comparison
 ├── generated_datasets/            # CSV exports of all five synthetic datasets
 │   ├── exponential_multiplicative.csv
 │   ├── exponential_additive.csv
@@ -180,6 +185,72 @@ the multiplicative-noise case where its assumptions are exactly satisfied.
 
 See `comparison_results/summary_by_method.csv` for the full per-method table
 and `rmse_by_method.png` for a visual ranking.
+
+---
+
+## Cost Analysis
+
+Run `python cost_analysis.py` to instrument every fit with wall-clock time,
+optimizer iterations, and model-function evaluations (the latter captures
+Jacobian work, since numerical Jacobian calls `model_fn` 2p times per
+Jacobian). Outputs land in `comparison_results/`.
+
+### Cost-vs-accuracy by family
+
+Order-of-magnitude per-fit cost on these datasets (n = 120–500):
+
+| Family | Time per fit | Iterations | Notes |
+|--------|-------------:|-----------:|-------|
+| Linearized OLS | ~0.1 ms | n/a | Pure linear algebra; one Box-Cox/Yeo-Johnson grid search dominates |
+| BFGS / Gauss-Newton | ~1–10 ms | 5–50 | ~10× slower than linear; numerical Jacobian is the bottleneck |
+| ZZU hybrid | ~3–30 ms | 5–50 | Adds the screening phase on top of one nonlinear fit |
+| Gradient descent | ~100 ms – 1 s | 5000 (capped) | Dominated everywhere — slow and rarely converges |
+
+`cost_pareto.png` shows the full RMSE-vs-time Pareto per dataset. Linearized
+OLS is on the frontier only on `exponential_multiplicative`. On every other
+dataset, GN or BFGS (or ZZU) dominates: the ~10× extra cost buys a 5–100×
+RMSE reduction. ZZU appears on the frontier on `multivariable_nonlinear`,
+where its ~3× overhead over BFGS purchases a real RMSE improvement
+(4.65 vs 4.75).
+
+### Does the screening step pay for itself? Warm-start vs cold-start BFGS
+
+Same dataset, same target tolerance, two starting points: a data-driven
+heuristic (cold) vs the transformation-derived theta from ZZU's screening
+(warm). Mean over 10 splits:
+
+| Dataset | Init | Iterations | model_fn calls | Time (ms) |
+|---------|------|-----------:|---------------:|----------:|
+| `exponential_multiplicative` | cold | 13 | 205 | 1.6 |
+| `exponential_multiplicative` | warm | **9** | **150** | **1.2** |
+| `exponential_additive` | cold | **20** | **302** | **2.4** |
+| `exponential_additive` | warm | 26 | 395 | 3.1 |
+
+This is the cleanest theory-vs-empirics match in the project:
+
+- On `exponential_multiplicative`, the noise is multiplicative lognormal, so
+  the log transform is *exact* and the screened init lands in the basin of
+  the SSE optimum. Warm start cuts iterations and model evals by ~25–30%.
+- On `exponential_additive`, the noise is additive Gaussian, so log
+  *distorts* the residuals. The screened init looks plausible but is biased
+  away from the original-scale SSE optimum. Warm start runs ~30% slower
+  than cold.
+
+The takeaway for ZZU: the screening phase is worth its cost when the
+chosen transform is consistent with the noise structure. When it isn't,
+diagnostics on the screening table should flag it before the warm start
+is used. This is exactly the diagnostic-guided spirit of the workflow.
+
+### Practical recommendations
+
+- For `exp_mult`-style data (multiplicative noise), use linearized OLS
+  directly — it's 10× faster than any nonlinear method at the same RMSE.
+- For everything else, prefer **Gauss-Newton or BFGS** as the workhorse;
+  drop GD entirely (it's 100× slower without accuracy benefit).
+- Use ZZU when (a) you have no good heuristic init for the nonlinear
+  optimizer, or (b) the screening step is genuinely informative about the
+  noise structure (in which case it pays back via faster warm-started
+  convergence).
 
 ---
 
