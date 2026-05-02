@@ -11,7 +11,7 @@ y = bundle.y.values
 model_fn   = lambda X, t: t[0] * np.exp(t[1] * X[:, 0])
 theta_init = np.array([1.0, 1.0])
 
-gd = ta.GradientDescentRegressor(model_fn=model_fn, max_iter=3000, learning_rate=0.002).fit(X, y, theta_init)
+gd = ta.GradientDescentRegressor(model_fn=model_fn, max_iter=5000, learning_rate=1e-4, decay=0.9999).fit(X, y, theta_init)
 gn = ta.GaussNewtonRegressor(model_fn=model_fn).fit(X, y, theta_init)
 bf = ta.BFGSRegressor(model_fn=model_fn).fit(X, y, theta_init)
 
@@ -21,6 +21,10 @@ for name, reg in [('GD', gd), ('GN', gn), ('BFGS', bf)]:
     print(f'{name}: converged={reg.converged_}, n_iter={reg.n_iter_}, RMSE={rmse:.4f}, theta={reg.theta_}')
 
 # --- Test 2: ZZU workflow ---
+# coeff_to_init maps the best TransformedOLS model's coefficients to a
+# nonlinear theta_init.  For y = a*exp(b*x), log-linearization gives
+# log(y) = beta0 + beta1*x  =>  a = exp(beta0), b = beta1.
+# We restrict screening to log so the mapping is always valid.
 def coeff_to_init(tols_model):
     beta = tols_model.beta_
     return np.array([np.exp(beta[0]), beta[1]])
@@ -29,6 +33,7 @@ zzu = ta.ZZUTransformRegressor(
     model_fn=model_fn,
     coeff_to_init=coeff_to_init,
     nonlinear_method='bfgs',
+    transformations={'log_smear': ta.TransformedOLS(transform='log', use_smearing=True)},
 ).fit(X, y)
 s = zzu.summary()
 best_t = s['best_transform']
@@ -38,7 +43,7 @@ print(f'ZZU: best_transform={best_t}, converged={converged}, RMSE={rmse:.4f}')
 print(f'     theta_init_used={zzu.theta_init_used_}, final_theta={s["final_theta"]}')
 
 # --- Test 3: evaluate_nonlinear_models ---
-models = {'gd': ta.GradientDescentRegressor(model_fn=model_fn, max_iter=3000, learning_rate=0.002),
+models = {'gd': ta.GradientDescentRegressor(model_fn=model_fn, max_iter=5000, learning_rate=1e-4, decay=0.9999),
           'gn': ta.GaussNewtonRegressor(model_fn=model_fn),
           'bf': ta.BFGSRegressor(model_fn=model_fn)}
 inits  = {'gd': theta_init, 'gn': theta_init, 'bf': theta_init}
