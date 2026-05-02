@@ -915,3 +915,869 @@ def evaluate_transformed_models(
     out = pd.DataFrame(rows)
     return out.sort_values(["rmse", "model"], na_position="last").reset_index(drop=True)
 
+
+# ## 10. Nonlinear regression utilities
+#
+# Direct nonlinear least squares minimizes
+#
+#   SSE(theta) = sum_i (y_i - f(x_i, theta))^2
+#
+# over the parameter vector theta.  The gradient and Jacobian are central to
+# all three optimizers below.  When an analytic Jacobian is unavailable,
+# central finite differences provide a reliable numerical approximation.
+
+
+def numerical_jacobian(
+    f: Callable[[np.ndarray, np.ndarray], np.ndarray],
+    theta: np.ndarray,
+    X: np.ndarray,
+    h: float = 1e-5,
+) -> np.ndarray:
+    """
+    Approximate the Jacobian of f(X, theta) with respect to theta using
+    central finite differences.
+
+    Parameters
+    ----------
+    f:
+        Function with signature f(X, theta) -> ndarray of shape (n,).
+    theta:
+        Current parameter vector of shape (p,).
+    X:
+        Predictor matrix of shape (n, q).
+    h:
+        Base finite-difference step size.  An adaptive per-parameter step
+        h_j = max(h, |theta_j| * h) is used so that relative precision is
+        maintained near zero.
+
+    Returns
+    -------
+    J : ndarray of shape (n, p)
+        J[i, j] = df_i / d theta_j at the given theta.
+    """
+    theta = np.asarray(theta, dtype=float).ravel()
+    p = len(theta)
+    f0 = np.asarray(f(X, theta), dtype=float).ravel()
+    n = len(f0)
+    J = np.empty((n, p), dtype=float)
+
+    for j in range(p):
+        h_j = max(h, abs(theta[j]) * h)
+        e_j = np.zeros(p, dtype=float)
+        e_j[j] = h_j
+        f_plus = np.asarray(f(X, theta + e_j), dtype=float).ravel()
+        f_minus = np.asarray(f(X, theta - e_j), dtype=float).ravel()
+        J[:, j] = (f_plus - f_minus) / (2.0 * h_j)
+
+    return J
+
+
+# ## 11. Gradient descent nonlinear regressor
+#
+# Vanilla gradient descent updates theta by stepping opposite the gradient of
+# SSE/n.  An optional multiplicative learning-rate decay reduces the step
+# size over iterations to aid convergence near the minimum.
+
+
+@dataclass
+class GradientDescentRegressor:
+    """
+    Nonlinear least squares via gradient descent.
+
+    Parameters
+    ----------
+    model_fn:
+        Callable f(X, theta) -> ndarray of shape (n,) returning predictions.
+    jacobian_fn:
+        Optional analytic Jacobian df/dtheta of shape (n, p).  If None,
+        central finite differences are used.
+    learning_rate:
+        Initial step size.
+    max_iter:
+        Maximum number of gradient steps.
+    tol:
+        Relative change in SSE used as convergence criterion.
+    decay:
+        Multiplicative per-step learning-rate decay.  1.0 means no decay.
+    """
+
+    model_fn: Callable[[np.ndarray, np.ndarray], np.ndarray]
+    jacobian_fn: Optional[Callable[[np.ndarray, np.ndarray], np.ndarray]] = None
+    learning_rate: float = 0.01
+    max_iter: int = 2000
+    tol: float = 1e-8
+    decay: float = 1.0
+
+    theta_: Optional[np.ndarray] = field(default=None, init=False)
+    loss_history_: Optional[np.ndarray] = field(default=None, init=False)
+    converged_: Optional[bool] = field(default=None, init=False)
+    n_iter_: Optional[int] = field(default=None, init=False)
+    fit_error_: Optional[str] = field(default=None, init=False)
+
+    def fit(
+        self, X: np.ndarray, y: np.ndarray, theta_init: np.ndarray
+    ) -> "GradientDescentRegressor":
+        """
+        Fit the model by gradient descent on SSE/n.
+
+        Parameters
+        ----------
+        X:
+            Predictor matrix of shape (n, q) or (n,).
+        y:
+            Response vector of shape (n,).
+        theta_init:
+            Initial parameter vector of shape (p,).
+
+        Returns
+        -------
+        self
+        """
+        try:
+            X = as_2d(X)
+            y = np.asarray(y, dtype=float).ravel()
+            theta = np.asarray(theta_init, dtype=float).ravel().copy()
+            n = len(y)
+
+            losses: list = []
+            converged = False
+            sse_prev = np.inf
+
+            for t in range(self.max_iter):
+                r = y - self.model_fn(X, theta)
+                if self.jacobian_fn is not None:
+                    J = self.jacobian_fn(X, theta)
+                else:
+                    J = numerical_jacobian(self.model_fn, theta, X)
+
+                grad = -2.0 * (J.T @ r) / n
+                lr_t = self.learning_rate * (self.decay ** t)
+                theta_new = theta - lr_t * grad
+
+                sse_new = float(np.sum((y - self.model_fn(X, theta_new)) ** 2))
+                losses.append(sse_new / n)
+
+                if abs(sse_prev - sse_new) / max(abs(sse_prev), EPS) < self.tol:
+                    theta = theta_new
+                    converged = True
+                    self.n_iter_ = t + 1
+                    break
+
+                theta = theta_new
+                sse_prev = sse_new
+            else:
+                self.n_iter_ = self.max_iter
+
+            self.theta_ = theta
+            self.loss_history_ = np.array(losses)
+            self.converged_ = converged
+
+        except Exception as exc:
+            self.theta_ = np.asarray(theta_init, dtype=float).ravel().copy()
+            self.loss_history_ = np.array([])
+            self.converged_ = False
+            self.n_iter_ = 0
+            self.fit_error_ = str(exc)
+
+        return self
+
+    def predict(self, X: np.ndarray) -> np.ndarray:
+        """
+        Predict on the original response scale.
+        """
+        if self.theta_ is None:
+            raise RuntimeError("Model must be fit before prediction.")
+        return np.asarray(self.model_fn(as_2d(X), self.theta_), dtype=float).ravel()
+
+    def summary(self) -> Dict[str, Any]:
+        """
+        Return a compact model summary.
+        """
+        if self.theta_ is None:
+            raise RuntimeError("Model must be fit before summary.")
+        final_loss = float(self.loss_history_[-1]) if len(self.loss_history_) > 0 else np.nan
+        return {
+            "method": "gradient_descent",
+            "converged": self.converged_,
+            "n_iter": self.n_iter_,
+            "final_loss": final_loss,
+            "theta": self.theta_,
+            "learning_rate": self.learning_rate,
+            "decay": self.decay,
+        }
+
+
+# ## 12. Gauss-Newton / Levenberg-Marquardt nonlinear regressor
+#
+# Gauss-Newton linearizes the residuals around the current theta and solves
+# the resulting linear system for the update delta:
+#
+#   (J^T J + lambda * I) delta = J^T r
+#
+# When lambda = 0 this is pure Gauss-Newton.  If a step increases SSE, the
+# damping coefficient lambda is automatically activated and increased,
+# producing the Levenberg-Marquardt (LM) behavior.  Accepted steps reduce
+# lambda back toward zero, recovering the faster Gauss-Newton convergence.
+
+
+@dataclass
+class GaussNewtonRegressor:
+    """
+    Nonlinear least squares via Gauss-Newton with Levenberg-Marquardt damping.
+
+    Parameters
+    ----------
+    model_fn:
+        Callable f(X, theta) -> ndarray of shape (n,).
+    jacobian_fn:
+        Optional analytic Jacobian.  If None, central finite differences are
+        used.
+    max_iter:
+        Maximum number of iterations.
+    tol:
+        Relative step-size convergence criterion.
+    damping:
+        Initial LM damping coefficient lambda.  Set to 0 for pure
+        Gauss-Newton; the solver self-activates damping if needed.
+    max_damping:
+        Upper bound on the damping coefficient.  Reaching this value
+        triggers early termination.
+    damping_factor:
+        Multiplicative factor by which lambda is increased (rejected steps)
+        or decreased (accepted steps).
+    """
+
+    model_fn: Callable[[np.ndarray, np.ndarray], np.ndarray]
+    jacobian_fn: Optional[Callable[[np.ndarray, np.ndarray], np.ndarray]] = None
+    max_iter: int = 100
+    tol: float = 1e-8
+    damping: float = 0.0
+    max_damping: float = 1e8
+    damping_factor: float = 10.0
+
+    theta_: Optional[np.ndarray] = field(default=None, init=False)
+    converged_: Optional[bool] = field(default=None, init=False)
+    n_iter_: Optional[int] = field(default=None, init=False)
+    fit_error_: Optional[str] = field(default=None, init=False)
+
+    def fit(
+        self, X: np.ndarray, y: np.ndarray, theta_init: np.ndarray
+    ) -> "GaussNewtonRegressor":
+        """
+        Fit the model by Gauss-Newton with optional LM damping.
+
+        Parameters
+        ----------
+        X:
+            Predictor matrix of shape (n, q) or (n,).
+        y:
+            Response vector of shape (n,).
+        theta_init:
+            Initial parameter vector of shape (p,).
+
+        Returns
+        -------
+        self
+        """
+        try:
+            X = as_2d(X)
+            y = np.asarray(y, dtype=float).ravel()
+            theta = np.asarray(theta_init, dtype=float).ravel().copy()
+            p = len(theta)
+            lam = float(self.damping)
+            converged = False
+
+            for t in range(self.max_iter):
+                r = y - self.model_fn(X, theta)
+                if self.jacobian_fn is not None:
+                    J = self.jacobian_fn(X, theta)
+                else:
+                    J = numerical_jacobian(self.model_fn, theta, X)
+
+                A = J.T @ J           # (p, p) approximate Hessian
+                g = J.T @ r           # (p,)   gradient of -0.5 * SSE
+
+                # Solve (A + lam*I) delta = g; fall back to least-squares if
+                # the matrix is singular even after damping.
+                try:
+                    delta = np.linalg.solve(A + lam * np.eye(p), g)
+                except np.linalg.LinAlgError:
+                    delta, *_ = np.linalg.lstsq(A + lam * np.eye(p), g, rcond=None)
+
+                theta_new = theta + delta
+                sse_new = float(np.sum((y - self.model_fn(X, theta_new)) ** 2))
+                sse_old = float(np.sum(r ** 2))
+
+                if sse_new <= sse_old:
+                    # Accept step; reduce damping toward Gauss-Newton regime.
+                    theta = theta_new
+                    lam = max(lam / self.damping_factor, 0.0)
+                else:
+                    # Reject step; increase damping toward gradient-descent regime.
+                    lam = lam * self.damping_factor if lam > 0.0 else 1e-4
+                    lam = min(lam, self.max_damping)
+                    if lam >= self.max_damping:
+                        self.n_iter_ = t + 1
+                        break
+
+                if np.linalg.norm(delta) / (np.linalg.norm(theta) + EPS) < self.tol:
+                    converged = True
+                    self.n_iter_ = t + 1
+                    break
+            else:
+                self.n_iter_ = self.max_iter
+
+            self.theta_ = theta
+            self.converged_ = converged
+
+        except Exception as exc:
+            self.theta_ = np.asarray(theta_init, dtype=float).ravel().copy()
+            self.converged_ = False
+            self.n_iter_ = 0
+            self.fit_error_ = str(exc)
+
+        return self
+
+    def predict(self, X: np.ndarray) -> np.ndarray:
+        """
+        Predict on the original response scale.
+        """
+        if self.theta_ is None:
+            raise RuntimeError("Model must be fit before prediction.")
+        return np.asarray(self.model_fn(as_2d(X), self.theta_), dtype=float).ravel()
+
+    def summary(self) -> Dict[str, Any]:
+        """
+        Return a compact model summary.
+        """
+        if self.theta_ is None:
+            raise RuntimeError("Model must be fit before summary.")
+        return {
+            "method": "gauss_newton",
+            "converged": self.converged_,
+            "n_iter": self.n_iter_,
+            "theta": self.theta_,
+            "damping": self.damping,
+        }
+
+
+# ## 13. BFGS quasi-Newton nonlinear regressor
+#
+# BFGS maintains an approximation H to the inverse Hessian of SSE/n and uses
+# it to compute a search direction d = -H g.  After each accepted step the
+# inverse Hessian is updated via the rank-two formula:
+#
+#   H_{k+1} = (I - rho s y^T) H_k (I - rho y s^T) + rho s s^T
+#
+# where s = alpha*d, y = g_{k+1} - g_k, and rho = 1 / (s^T y).
+#
+# The step size alpha is found by backtracking Armijo line search.
+
+
+@dataclass
+class BFGSRegressor:
+    """
+    Nonlinear least squares via BFGS quasi-Newton optimization.
+
+    This is a pure-numpy implementation; no scipy is required.
+
+    Parameters
+    ----------
+    model_fn:
+        Callable f(X, theta) -> ndarray of shape (n,).
+    jacobian_fn:
+        Optional analytic Jacobian.  If None, central finite differences are
+        used.
+    max_iter:
+        Maximum number of BFGS iterations.
+    tol:
+        Gradient-norm convergence criterion.
+    c1:
+        Armijo sufficient-decrease constant for backtracking line search.
+    """
+
+    model_fn: Callable[[np.ndarray, np.ndarray], np.ndarray]
+    jacobian_fn: Optional[Callable[[np.ndarray, np.ndarray], np.ndarray]] = None
+    max_iter: int = 500
+    tol: float = 1e-8
+    c1: float = 1e-4
+
+    theta_: Optional[np.ndarray] = field(default=None, init=False)
+    converged_: Optional[bool] = field(default=None, init=False)
+    n_iter_: Optional[int] = field(default=None, init=False)
+    fit_error_: Optional[str] = field(default=None, init=False)
+
+    def _objective(
+        self, theta: np.ndarray, X: np.ndarray, y: np.ndarray
+    ) -> float:
+        """SSE / n at theta."""
+        r = y - np.asarray(self.model_fn(X, theta), dtype=float).ravel()
+        return float(np.sum(r ** 2)) / len(y)
+
+    def _gradient(
+        self, theta: np.ndarray, X: np.ndarray, y: np.ndarray
+    ) -> np.ndarray:
+        """Gradient of SSE/n with respect to theta: -2 J^T r / n."""
+        r = y - np.asarray(self.model_fn(X, theta), dtype=float).ravel()
+        if self.jacobian_fn is not None:
+            J = self.jacobian_fn(X, theta)
+        else:
+            J = numerical_jacobian(self.model_fn, theta, X)
+        return -2.0 * (J.T @ r) / len(y)
+
+    def fit(
+        self, X: np.ndarray, y: np.ndarray, theta_init: np.ndarray
+    ) -> "BFGSRegressor":
+        """
+        Fit the model using BFGS with backtracking Armijo line search.
+
+        Parameters
+        ----------
+        X:
+            Predictor matrix of shape (n, q) or (n,).
+        y:
+            Response vector of shape (n,).
+        theta_init:
+            Initial parameter vector of shape (p,).
+
+        Returns
+        -------
+        self
+        """
+        try:
+            X = as_2d(X)
+            y = np.asarray(y, dtype=float).ravel()
+            theta = np.asarray(theta_init, dtype=float).ravel().copy()
+            p = len(theta)
+
+            H = np.eye(p)          # inverse Hessian approximation
+            I_p = np.eye(p)
+            converged = False
+
+            for k in range(self.max_iter):
+                g = self._gradient(theta, X, y)
+
+                # Convergence check on gradient norm.
+                if np.linalg.norm(g) < self.tol:
+                    converged = True
+                    self.n_iter_ = k
+                    break
+
+                # Search direction.
+                d = -(H @ g)
+
+                # Backtracking Armijo line search.
+                f_k = self._objective(theta, X, y)
+                gd = float(g @ d)
+                alpha = 1.0
+                for _ in range(60):
+                    if self._objective(theta + alpha * d, X, y) <= f_k + self.c1 * alpha * gd:
+                        break
+                    alpha *= 0.5
+                else:
+                    # Line search failed; keep best alpha found rather than
+                    # stopping, which may still make progress.
+                    pass
+
+                s = alpha * d
+                theta_new = theta + s
+                g_new = self._gradient(theta_new, X, y)
+                yk = g_new - g
+                sy = float(s @ yk)
+
+                # BFGS inverse Hessian update (only when curvature condition holds).
+                if sy > EPS:
+                    rho = 1.0 / sy
+                    A = I_p - rho * np.outer(s, yk)
+                    B = I_p - rho * np.outer(yk, s)
+                    H = A @ H @ B + rho * np.outer(s, s)
+                    # Enforce symmetry to counteract floating-point drift.
+                    H = 0.5 * (H + H.T)
+                    # Reset H if it degrades numerically.
+                    if np.linalg.norm(H) > 1e12:
+                        H = np.eye(p)
+
+                # Relative step-size convergence check.
+                if np.linalg.norm(s) / (np.linalg.norm(theta) + EPS) < self.tol:
+                    theta = theta_new
+                    converged = True
+                    self.n_iter_ = k + 1
+                    break
+
+                theta = theta_new
+            else:
+                self.n_iter_ = self.max_iter
+
+            self.theta_ = theta
+            self.converged_ = converged
+
+        except Exception as exc:
+            self.theta_ = np.asarray(theta_init, dtype=float).ravel().copy()
+            self.converged_ = False
+            self.n_iter_ = 0
+            self.fit_error_ = str(exc)
+
+        return self
+
+    def predict(self, X: np.ndarray) -> np.ndarray:
+        """
+        Predict on the original response scale.
+        """
+        if self.theta_ is None:
+            raise RuntimeError("Model must be fit before prediction.")
+        return np.asarray(self.model_fn(as_2d(X), self.theta_), dtype=float).ravel()
+
+    def summary(self) -> Dict[str, Any]:
+        """
+        Return a compact model summary.
+        """
+        if self.theta_ is None:
+            raise RuntimeError("Model must be fit before summary.")
+        return {
+            "method": "bfgs",
+            "converged": self.converged_,
+            "n_iter": self.n_iter_,
+            "theta": self.theta_,
+            "c1": self.c1,
+        }
+
+
+# ## 14. ZZU hybrid transformation-to-nonlinear workflow
+#
+# The ZZU approach combines the two paradigms in three steps:
+#
+#   1. Screen — fit a suite of TransformedOLS models on a validation split and
+#      rank them by RMSE on held-out data.
+#   2. Warm start — convert the best linearized model's coefficients into
+#      initial nonlinear parameters via a user-supplied callable, then refine
+#      with direct nonlinear optimization.
+#   3. Bias correction — store training residuals; optionally subtract their
+#      mean from predictions to remove systematic offset.
+
+
+def _default_transformation_suite() -> Dict[str, TransformedOLS]:
+    """
+    Return the default set of TransformedOLS models used for ZZU screening.
+    """
+    return {
+        "identity": TransformedOLS(transform="identity", use_smearing=False),
+        "log_smear": TransformedOLS(transform="log", use_smearing=True),
+        "reciprocal_smear": TransformedOLS(transform="reciprocal", use_smearing=True),
+        "power_0.5_smear": TransformedOLS(transform="power", param=0.5, use_smearing=True),
+        "power_2_smear": TransformedOLS(transform="power", param=2.0, use_smearing=True),
+        "boxcox_smear": TransformedOLS(transform="boxcox", use_smearing=True),
+        "yeojohnson_smear": TransformedOLS(transform="yeojohnson", use_smearing=True),
+    }
+
+
+@dataclass
+class ZZUTransformRegressor:
+    """
+    ZZU hybrid workflow: screen transformations, warm-start nonlinear fitting.
+
+    Parameters
+    ----------
+    model_fn:
+        Callable f(X, theta) -> ndarray of shape (n,) for the nonlinear model.
+    coeff_to_init:
+        Callable that receives the best-fitting TransformedOLS model after it
+        has been re-fit on the full training data and returns an initial
+        parameter vector theta_init of shape (p,) for the nonlinear optimizer.
+    jacobian_fn:
+        Optional analytic Jacobian passed to the nonlinear optimizer.
+    nonlinear_method:
+        Which optimizer to use after the warm start.  One of
+        "gradient_descent", "gauss_newton", or "bfgs".
+    transformations:
+        Custom dict of TransformedOLS models for Step 1 screening.  If None,
+        the default seven-model suite is used.
+    val_fraction:
+        Fraction of training data held out for screening.  If fewer than ten
+        observations are available, screening uses training RMSE instead.
+    use_smearing:
+        Whether to apply additive bias correction (mean training residual) to
+        original-scale predictions.
+    nonlinear_kwargs:
+        Extra keyword arguments forwarded to the nonlinear regressor's
+        constructor (e.g., max_iter, learning_rate).
+    seed:
+        Seed for the reproducible validation split.
+    fallback_theta_init:
+        Parameter vector used if coeff_to_init raises an exception.  If None,
+        a vector of ones with length inferred from beta_ is used.
+    """
+
+    model_fn: Callable[[np.ndarray, np.ndarray], np.ndarray]
+    coeff_to_init: Callable[["TransformedOLS"], np.ndarray]
+    jacobian_fn: Optional[Callable[[np.ndarray, np.ndarray], np.ndarray]] = None
+    nonlinear_method: str = "bfgs"
+    transformations: Optional[Dict[str, TransformedOLS]] = None
+    val_fraction: float = 0.2
+    use_smearing: bool = True
+    nonlinear_kwargs: Optional[Dict[str, Any]] = None
+    seed: int = 0
+    fallback_theta_init: Optional[np.ndarray] = None
+
+    best_transform_name_: Optional[str] = field(default=None, init=False)
+    best_transform_model_: Optional[TransformedOLS] = field(default=None, init=False)
+    nonlinear_regressor_: Optional[object] = field(default=None, init=False)
+    screening_table_: Optional[pd.DataFrame] = field(default=None, init=False)
+    train_residuals_: Optional[np.ndarray] = field(default=None, init=False)
+    theta_init_used_: Optional[np.ndarray] = field(default=None, init=False)
+    X_train_: Optional[np.ndarray] = field(default=None, init=False)
+    y_train_: Optional[np.ndarray] = field(default=None, init=False)
+    fit_error_: Optional[str] = field(default=None, init=False)
+
+    def fit(self, X: np.ndarray, y: np.ndarray) -> "ZZUTransformRegressor":
+        """
+        Run the three-step ZZU workflow on training data.
+
+        Parameters
+        ----------
+        X:
+            Predictor matrix of shape (n, q) or (n,).
+        y:
+            Response vector of shape (n,).
+
+        Returns
+        -------
+        self
+        """
+        try:
+            X = as_2d(X)
+            y = np.asarray(y, dtype=float).ravel()
+            self.X_train_ = X.copy()
+            self.y_train_ = y.copy()
+            n = len(y)
+
+            suite = (
+                self.transformations
+                if self.transformations is not None
+                else _default_transformation_suite()
+            )
+            kwargs = self.nonlinear_kwargs or {}
+
+            # ------------------------------------------------------------------
+            # Step 1: Screen transformations.
+            # ------------------------------------------------------------------
+            if n >= 10:
+                n_val = max(2, int(self.val_fraction * n))
+                rng = np.random.default_rng(self.seed)
+                idx = rng.permutation(n)
+                val_idx = idx[:n_val]
+                train_idx = idx[n_val:]
+                X_tr, y_tr = X[train_idx], y[train_idx]
+                X_val, y_val = X[val_idx], y[val_idx]
+                use_val = True
+            else:
+                # Too few observations; skip validation split.
+                X_tr, y_tr, X_val, y_val = X, y, X, y
+                use_val = False
+
+            rows = []
+            for name, tols_model in suite.items():
+                try:
+                    tols_model.fit(X_tr, y_tr)
+                    val_pred = tols_model.predict(X_val)
+                    val_rmse = regression_metrics(y_val, val_pred)["rmse"]
+                    rows.append({"name": name, "model": tols_model,
+                                 "val_rmse": val_rmse, "error": ""})
+                except Exception as exc:
+                    rows.append({"name": name, "model": tols_model,
+                                 "val_rmse": np.inf, "error": str(exc)})
+
+            screening_df = pd.DataFrame(rows).sort_values("val_rmse").reset_index(drop=True)
+            self.screening_table_ = screening_df
+
+            # Re-fit the best model on the full training data before extracting
+            # its coefficients, so the warm start reflects all available data.
+            best_row = screening_df.iloc[0]
+            best_model: TransformedOLS = best_row["model"]
+            best_model.fit(X, y)
+            self.best_transform_name_ = best_row["name"]
+            self.best_transform_model_ = best_model
+
+            # ------------------------------------------------------------------
+            # Step 2: Warm start — convert linearized coefficients to theta_init
+            # and run direct nonlinear optimization.
+            # ------------------------------------------------------------------
+            try:
+                theta_init = np.asarray(
+                    self.coeff_to_init(best_model), dtype=float
+                ).ravel()
+            except Exception as exc:
+                # Fall back gracefully when the user-supplied converter fails.
+                self.fit_error_ = f"coeff_to_init failed: {exc}"
+                if self.fallback_theta_init is not None:
+                    theta_init = np.asarray(self.fallback_theta_init, dtype=float).ravel()
+                else:
+                    theta_init = np.ones(len(best_model.beta_) - 1, dtype=float)
+
+            self.theta_init_used_ = theta_init.copy()
+
+            _method = self.nonlinear_method
+            if _method == "gradient_descent":
+                reg = GradientDescentRegressor(
+                    model_fn=self.model_fn, jacobian_fn=self.jacobian_fn, **kwargs
+                )
+            elif _method == "gauss_newton":
+                reg = GaussNewtonRegressor(
+                    model_fn=self.model_fn, jacobian_fn=self.jacobian_fn, **kwargs
+                )
+            elif _method == "bfgs":
+                reg = BFGSRegressor(
+                    model_fn=self.model_fn, jacobian_fn=self.jacobian_fn, **kwargs
+                )
+            else:
+                raise ValueError(
+                    f"Unknown nonlinear_method: {_method!r}. "
+                    "Choose 'gradient_descent', 'gauss_newton', or 'bfgs'."
+                )
+
+            reg.fit(X, y, theta_init)
+            self.nonlinear_regressor_ = reg
+
+            # ------------------------------------------------------------------
+            # Step 3: Store training residuals for optional bias correction.
+            # ------------------------------------------------------------------
+            self.train_residuals_ = y - reg.predict(X)
+
+        except Exception as exc:
+            self.fit_error_ = str(exc)
+
+        return self
+
+    def predict(
+        self, X: np.ndarray, use_smearing: Optional[bool] = None
+    ) -> np.ndarray:
+        """
+        Predict on the original response scale.
+
+        Parameters
+        ----------
+        X:
+            Predictor matrix of shape (m, q) or (m,).
+        use_smearing:
+            If True, add the mean training residual as an additive bias
+            correction.  If None, the instance default is used.
+
+        Returns
+        -------
+        y_pred : ndarray of shape (m,)
+        """
+        if self.nonlinear_regressor_ is None:
+            raise RuntimeError("Model must be fit before prediction.")
+
+        if use_smearing is None:
+            use_smearing = self.use_smearing
+
+        y_hat = self.nonlinear_regressor_.predict(X)
+
+        if use_smearing and self.train_residuals_ is not None:
+            bias = float(np.mean(self.train_residuals_))
+            y_hat = y_hat + bias
+
+        return y_hat.ravel()
+
+    def summary(self) -> Dict[str, Any]:
+        """
+        Return a compact model summary.
+        """
+        if self.nonlinear_regressor_ is None:
+            raise RuntimeError("Model must be fit before summary.")
+
+        train_metrics = regression_metrics(
+            self.y_train_, self.nonlinear_regressor_.predict(self.X_train_)
+        )
+        selected_lambda = (
+            self.best_transform_model_.selected_param_
+            if self.best_transform_model_ is not None
+            else np.nan
+        )
+
+        return {
+            "best_transform": self.best_transform_name_,
+            "selected_lambda": selected_lambda,
+            "nonlinear_method": self.nonlinear_method,
+            "final_theta": self.nonlinear_regressor_.theta_,
+            "converged": self.nonlinear_regressor_.converged_,
+            "theta_init_used": self.theta_init_used_,
+            "train_metrics": train_metrics,
+        }
+
+
+# ## 15. Nonlinear model evaluation helper
+#
+# Mirrors evaluate_transformed_models: fit every regressor in a dict, record
+# metrics and diagnostics, and return a sorted DataFrame.  Models that raise
+# are recorded with an error message rather than stopping the evaluation.
+
+
+def evaluate_nonlinear_models(
+    X: np.ndarray,
+    y: np.ndarray,
+    models_dict: Dict[str, Any],
+    theta_inits: Dict[str, np.ndarray],
+) -> pd.DataFrame:
+    """
+    Fit and evaluate a dictionary of nonlinear regressors.
+
+    Parameters
+    ----------
+    X:
+        Predictor matrix of shape (n, q) or (n,).
+    y:
+        Response vector of shape (n,).
+    models_dict:
+        Dict mapping name to an instance of GradientDescentRegressor,
+        GaussNewtonRegressor, or BFGSRegressor.
+    theta_inits:
+        Dict mapping the same names to initial parameter vectors.
+
+    Returns
+    -------
+    DataFrame sorted by RMSE (ascending), with columns: model, method,
+    converged, n_iter, error, and all regression_metrics /
+    residual_diagnostics columns.
+    """
+    rows = []
+
+    for name, model in models_dict.items():
+        try:
+            theta_init = theta_inits[name]
+            model.fit(X, y, theta_init)
+            pred = model.predict(X)
+            metrics = regression_metrics(y, pred)
+            diags = residual_diagnostics(y, pred)
+            row = {
+                "model": name,
+                "method": type(model).__name__,
+                "converged": model.converged_,
+                "n_iter": model.n_iter_,
+                "error": "",
+                **metrics,
+                **diags,
+            }
+        except Exception as exc:
+            row = {
+                "model": name,
+                "method": type(model).__name__,
+                "converged": False,
+                "n_iter": 0,
+                "error": str(exc),
+                "n_valid": 0,
+                "rmse": np.nan,
+                "mae": np.nan,
+                "mse": np.nan,
+                "r2": np.nan,
+                "residual_mean": np.nan,
+                "residual_std": np.nan,
+                "residual_skew": np.nan,
+                "residual_excess_kurtosis": np.nan,
+                "corr_abs_resid_fitted": np.nan,
+            }
+        rows.append(row)
+
+    out = pd.DataFrame(rows)
+    return out.sort_values(["rmse", "model"], na_position="last").reset_index(drop=True)
+
