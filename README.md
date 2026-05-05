@@ -107,7 +107,75 @@ All five are exported to `generated_datasets/` as CSV files.
 
 ---
 
-## ZZU Workflow
+## How to Use
+
+All three method families share the same scikit-learn-style interface
+(`fit` returns `self`; fitted attributes end with `_`). The sections
+below give the minimal call pattern for each.
+
+### Inputs and outputs (uniform across all classes)
+
+| Argument | Shape | Notes |
+|----------|-------|-------|
+| `X` (fit, predict) | `(n, p)` or `(n,)` | 1D arrays are auto-promoted to 2D via `as_2d` at fit time |
+| `y` (fit) | `(n,)` | Original response scale |
+| Return of `predict(X_new)` | `(m,)` | **Always on the original response scale** — back-transformation and bias correction are handled internally |
+
+Common fitted attributes: `.beta_` / `.theta_` (coefficients),
+`.converged_`, `.n_iter_`, `.fit_error_` (an error string if the fit
+caught an exception, or `None` otherwise — fits never raise).
+
+### Linear methods — `TransformedOLS`
+
+Fits OLS in a transformed response space, then inverts back to the
+original scale (with optional Duan-style smearing correction):
+
+```python
+import transformation_algorithms as ta
+
+m = ta.TransformedOLS(transform="boxcox", use_smearing=True).fit(X, y)
+y_hat = m.predict(X_new)         # original scale, smearing applied
+m.summary()                      # {transform, selected_param_or_lambda, coefficients, ...}
+```
+
+Six transform families are available via the `transform=` argument:
+`identity`, `log`, `reciprocal`, `power` (requires `param=p`), `boxcox`,
+`yeojohnson`. For `boxcox` and `yeojohnson`, λ is auto-selected by
+profile likelihood unless `lambda_=` is given. Set `use_smearing=False`
+to disable retransformation bias correction.
+
+### Nonlinear methods — `GradientDescentRegressor`, `GaussNewtonRegressor`, `BFGSRegressor`
+
+Direct nonlinear least squares on the original scale. Supply your model
+function `f(X, theta) -> (n,)` and an initial parameter vector:
+
+```python
+import numpy as np
+
+model_fn = lambda X, t: t[0] * np.exp(t[1] * X[:, 0])    # y = a · exp(b·x)
+theta_init = np.array([1.0, 0.1])
+
+reg = ta.BFGSRegressor(model_fn=model_fn).fit(X, y, theta_init)
+y_hat = reg.predict(X_new)
+reg.theta_, reg.converged_, reg.n_iter_, reg.fit_error_
+```
+
+Picking the optimizer:
+- **`BFGSRegressor`** — robust default; pure-NumPy inverse Hessian update with backtracking Armijo line search.
+- **`GaussNewtonRegressor`** — fastest when the problem is well-posed; self-activating Levenberg-Marquardt damping handles ill-conditioned steps.
+- **`GradientDescentRegressor`** — pedagogical baseline; usually 100× slower than BFGS/GN for the same accuracy.
+
+If you don't pass `jacobian_fn=`, the optimizer uses central
+finite-difference numerical Jacobians (2p model evaluations per
+Jacobian).
+
+### Hybrid — `ZZUTransformRegressor`
+
+Combines the two families: screen linearizations on a validation split,
+warm-start a nonlinear optimizer from the winning linearization, and
+apply an additive bias correction at predict time. Inputs and outputs
+follow the same conventions as above (`X: (n, p)`, `y: (n,)`,
+`predict → (m,)` on the original scale).
 
 ```python
 import numpy as np
@@ -137,7 +205,10 @@ print(zzu.summary())
 # {'best_transform': 'log_smear', 'converged': True, 'final_theta': [2.167, 0.679], ...}
 ```
 
-**Key design rule:** `coeff_to_init` must be consistent with the transforms in the screening suite. Restrict `transformations` to those you know how to invert back to nonlinear parameters.
+**Key design rule:** `coeff_to_init` must be consistent with the
+transforms in the screening suite. Restrict `transformations` to those
+you know how to invert back to nonlinear parameters; supply
+`fallback_theta_init=` for safety.
 
 ---
 
