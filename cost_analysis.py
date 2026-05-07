@@ -255,41 +255,108 @@ def summarize_costs(raw: pd.DataFrame) -> pd.DataFrame:
     ).reset_index(drop=True)
 
 
+def _draw_pareto_panel(ax, sub: pd.DataFrame, *, dataset: str,
+                       show_legend: bool) -> None:
+    """Draw a single dataset's Pareto plot on ax, with adjustText
+    auto-placement of method labels to avoid overlap.  Used by both the
+    combined and per-dataset Pareto plotters."""
+    try:
+        from adjustText import adjust_text
+    except ImportError:
+        adjust_text = None  # graceful fallback; see below
+
+    texts = []
+    for family, color in FAMILY_COLOR.items():
+        s = sub[sub["family"] == family]
+        if s.empty:
+            continue
+        ax.scatter(
+            s["mean_fit_time_sec"], s["mean_rmse"],
+            s=70, c=color, edgecolor="black", label=family, zorder=3,
+        )
+        for _, r in s.iterrows():
+            texts.append(ax.text(
+                r["mean_fit_time_sec"], r["mean_rmse"], r["method"],
+                fontsize=9, color="black", alpha=0.95, zorder=4,
+            ))
+
+    ax.set_xscale("log")
+    ax.set_yscale("log")
+    ax.set_xlabel("fit time (s)")
+    ax.set_ylabel("test RMSE")
+    ax.set_title(dataset, fontsize=12, fontweight="bold")
+    ax.grid(alpha=0.3, which="both")
+
+    # Add a bit of headroom on both axes for label placement.
+    y0, y1 = ax.get_ylim()
+    ax.set_ylim(y0 * 0.85, y1 * 1.6)
+    x0, x1 = ax.get_xlim()
+    ax.set_xlim(x0 * 0.7, x1 * 1.4)
+
+    if adjust_text is not None and texts:
+        adjust_text(
+            texts, ax=ax,
+            arrowprops=dict(arrowstyle="-", color="gray",
+                            lw=0.6, alpha=0.7),
+            expand=(1.2, 1.6),
+            force_text=(0.6, 0.8),
+            force_points=(0.4, 0.6),
+        )
+    else:
+        # Fallback: rotated labels with offset (less reliable).
+        for txt, (xp, yp) in zip(
+            texts,
+            [(ax.lines[0].get_xydata()[0])] if False else
+            [(t.get_position()) for t in texts],
+        ):
+            txt.set_rotation(32)
+            txt.set_horizontalalignment("left")
+            txt.set_verticalalignment("bottom")
+
+    if show_legend:
+        ax.legend(loc="upper right", fontsize=9)
+
+
 def plot_pareto(summary: pd.DataFrame, out_path: Path) -> None:
+    """Combined view: 1×5 grid of Pareto panels."""
     datasets = list(DATASET_SPECS.keys())
     n = len(datasets)
-    fig, axes = plt.subplots(1, n, figsize=(4.0 * n, 4.2), constrained_layout=True)
+    fig, axes = plt.subplots(1, n, figsize=(4.5 * n, 5.0),
+                             constrained_layout=True)
     if n == 1:
         axes = [axes]
 
     for ax, dataset in zip(axes, datasets):
-        sub = summary[(summary["dataset"] == dataset) & summary["mean_rmse"].notna()]
-        for family, color in FAMILY_COLOR.items():
-            s = sub[sub["family"] == family]
-            if s.empty:
-                continue
-            ax.scatter(
-                s["mean_fit_time_sec"], s["mean_rmse"],
-                s=70, c=color, edgecolor="black", label=family,
-            )
-            for _, r in s.iterrows():
-                ax.annotate(
-                    r["method"],
-                    (r["mean_fit_time_sec"], r["mean_rmse"]),
-                    fontsize=7, alpha=0.85,
-                    xytext=(3, 3), textcoords="offset points",
-                )
-        ax.set_xscale("log")
-        ax.set_yscale("log")
-        ax.set_xlabel("fit time (s)")
-        ax.set_ylabel("test RMSE")
-        ax.set_title(dataset, fontsize=10)
-        ax.grid(alpha=0.3, which="both")
+        sub = summary[(summary["dataset"] == dataset)
+                      & summary["mean_rmse"].notna()]
+        _draw_pareto_panel(ax, sub, dataset=dataset, show_legend=False)
 
-    axes[-1].legend(loc="best", fontsize=8)
-    fig.suptitle(f"Cost-vs-accuracy Pareto (mean over {N_SEEDS} splits)", fontsize=12)
+    axes[-1].legend(loc="best", fontsize=9)
+    fig.suptitle(f"Cost-vs-accuracy Pareto (mean over {N_SEEDS} splits)",
+                 fontsize=13)
     fig.savefig(out_path, dpi=130)
     plt.close(fig)
+
+
+def plot_pareto_per_dataset(summary: pd.DataFrame, out_dir: Path) -> list:
+    """Per-dataset view: write one PNG per dataset at full size so labels
+    have enough room to be readable.  Returns the list of paths written."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    paths = []
+    for dataset in DATASET_SPECS.keys():
+        sub = summary[(summary["dataset"] == dataset)
+                      & summary["mean_rmse"].notna()]
+        if sub.empty:
+            continue
+        fig, ax = plt.subplots(figsize=(10, 6.5), constrained_layout=True)
+        _draw_pareto_panel(ax, sub, dataset=dataset, show_legend=True)
+        fig.suptitle(f"Cost vs. accuracy — {dataset}  "
+                     f"(mean over {N_SEEDS} splits)", fontsize=13)
+        out = out_dir / f"cost_pareto_{dataset}.png"
+        fig.savefig(out, dpi=140)
+        plt.close(fig)
+        paths.append(out)
+    return paths
 
 
 def plot_warm_vs_cold(raw: pd.DataFrame, out_path: Path) -> None:
@@ -366,8 +433,11 @@ def main() -> None:
     print(f"Wrote summary to {OUTPUT_DIR / 'cost_summary.csv'}")
 
     plot_pareto(summary, OUTPUT_DIR / "cost_pareto.png")
+    per_dataset_paths = plot_pareto_per_dataset(summary, OUTPUT_DIR)
     plot_warm_vs_cold(raw, OUTPUT_DIR / "warm_vs_cold.png")
     print(f"Wrote plots to {OUTPUT_DIR}/")
+    for p in per_dataset_paths:
+        print(f"  - {p.name}")
 
     # --- Console summary -----------------------------------------------------
     print("\nMean cost per method (cheapest 5 per dataset):")
