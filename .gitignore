@@ -1,4 +1,22 @@
-__pycache__
+# --- Python bytecode and caches ---
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*$py.class
+
+# --- Test / lint / type-check caches ---
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# --- Editor / OS noise ---
+.DS_Store
+.idea/
+.vscode/
+
+# --- Project-specific large or generated artifacts ---
 main (2).tex
 ZZU_Transformations_Presentation.pptx
 toy_datasets_intro.pptx
