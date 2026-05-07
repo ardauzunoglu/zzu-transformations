@@ -353,6 +353,70 @@ is used. This is exactly the diagnostic-guided spirit of the workflow.
 
 ---
 
+## Real-World Dataset Evaluation
+
+`concrete_analysis.ipynb` applies the full ZZU workflow to the **UCI Concrete Compressive Strength** dataset (UCI ML Repository #165): 1 030 laboratory mix-design records, 8 predictors, target in MPa.
+
+### Dataset
+
+| Property | Value |
+|----------|-------|
+| Observations | 1 030 |
+| Predictors | cement, blast furnace slag, fly ash, water, superplasticizer, coarse aggregate, fine aggregate, age |
+| Target | Compressive strength (MPa) |
+| Range | ~2.3 – 82.6 MPa (~36× ratio) |
+| Zero-inflated predictors | slag, fly ash, superplasticizer (cannot appear inside log/power transforms) |
+
+The response is right-skewed; a log transform substantially reduces skewness. Age exhibits near-log-linear growth in strength, motivating a power-law time term. The dominant strength driver is the water/cement ratio (Abrams' Law, 1919).
+
+### Feature Engineering
+
+Two domain-motivated features are added before fitting:
+
+- `wc_ratio = water / cement` — highest single-feature correlation with strength
+- `binder = cement + slag + fly_ash` — total cementitious content
+
+The nonlinear model uses log-transformed inputs to align the screening step with the nonlinear parameterisation:
+
+```
+X_zzu = [ log(cement/water),  log(age),  slag,  fly_ash,  superplasticizer ]
+```
+
+### Model
+
+Functional form (Abrams' Law core + additive supplements for zero-inflated features):
+
+```
+y = exp( θ₀ + θ₁·log(cement/water) + θ₂·log(age)
+             + θ₃·slag + θ₄·fly_ash + θ₅·SP )
+```
+
+Because the model is log-linear in the transformed inputs, the ZZU screening step fits `log(y) ~ X_zzu` via OLS and the warm-start inversion is exact: `θ_init = beta_` directly.
+
+### Methods Compared
+
+| Method | Family | Description |
+|--------|--------|-------------|
+| `identity_ols` | Linearized OLS | Plain OLS on log-transformed X features, no y-transform |
+| `log_smear` | Linearized OLS | ZZU Step 1 alone; log(y) ~ X with Duan smearing |
+| `boxcox_smear` | Linearized OLS | Box-Cox λ selected by profile likelihood |
+| `bfgs_cold` | Nonlinear cold | BFGS with heuristic Abrams'-Law init, no screening |
+| `gn_cold` | Nonlinear cold | Gauss-Newton with the same cold init |
+| `zzu_bfgs` | **ZZU hybrid** | Screening → warm start → BFGS refinement |
+
+Evaluation: 10 random 80/20 seeds, test RMSE and R² reported as mean ± std.
+
+### Key Findings
+
+- **ZZU warm-start vs cold-start**: because the model is exactly log-linear, the screened init lands near the SSE optimum; `zzu_bfgs` consistently converges in fewer iterations than `bfgs_cold` and achieves lower or equal test RMSE.
+- **Linearized OLS alone** (`log_smear`) is a strong baseline given the near-log-linear structure, but the additive supplement terms for zero-inflated features are not captured by the linear model, leaving residual error that the nonlinear optimizer corrects.
+- **Box-Cox** (`boxcox_smear`) offers no advantage over `log_smear` here: profile-likelihood selects λ ≈ 0 (the log), confirming the log transform is appropriate.
+- **Gauss-Newton cold** struggles more than BFGS cold because the Jacobian is ill-conditioned early in the search when starting far from the optimum.
+
+The concrete experiment illustrates the core ZZU thesis on real data: when a good linearization exists, screening identifies it automatically and the warm start cuts optimizer cost; when zero-inflated or otherwise unlinearizable terms are present, the nonlinear refinement step recovers what the screened OLS cannot represent.
+
+---
+
 ## Progress
 
 | Task | Status |
