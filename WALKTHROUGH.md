@@ -16,13 +16,13 @@ This is a quick map of the repo, where we show what each main file or folder is 
 ## Benchmark Scripts
 
 - [run_comparison.py](/Users/ardauzunoglu/zzu-transformations/run_comparison.py): Main benchmark across synthetic datasets.
-  Result: writes summary CSVs and plots into [comparison_results](/Users/ardauzunoglu/zzu-transformations/comparison_results).
+  Result: writes summary CSVs and plots into [comparison_results](/Users/ardauzunoglu/zzu-transformations/comparison_results). Run to reproduce Figure 2 from the report.
 
 - [scripts/cost_analysis.py](/Users/ardauzunoglu/zzu-transformations/scripts/cost_analysis.py): Cost/efficiency analysis.
-  Result: compares RMSE against fit time, iterations, and model evaluations.
+  Result: compares RMSE against fit time, iterations, and model evaluations. Run to reproduce Figure 1 from the report.
 
 - [scripts/zzu_inner_method_comparison.py](/Users/ardauzunoglu/zzu-transformations/scripts/zzu_inner_method_comparison.py): Inner-optimizer ablation.
-  Result: compares pure optimizers against ZZU plus the same optimizer.
+  Result: compares pure optimizers against ZZU plus the same optimizer. Run to reproduce Figure 3 from the report.
 
 ## Visualization Scripts
 
@@ -36,8 +36,6 @@ This is a quick map of the repo, where we show what each main file or folder is 
   Result: shows how GD, Gauss-Newton, and BFGS move across the loss surface.
 
 ## Notebooks
-
-- [ZZU_main_with_py_imports.ipynb](/Users/ardauzunoglu/zzu-transformations/ZZU_main_with_py_imports.ipynb): Main notebook version of the synthetic workflow.
 
 - [concrete_analysis.ipynb](/Users/ardauzunoglu/zzu-transformations/concrete_analysis.ipynb): Real-world concrete dataset analysis.
 
