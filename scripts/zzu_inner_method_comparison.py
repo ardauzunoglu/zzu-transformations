@@ -46,9 +46,9 @@ from run_comparison import (
     make_zzu,
     resolve_datasets,
 )
-from reproducibility import N_SEEDS, TEST_FRACTION
+from reproducibility import N_SEEDS, TEST_FRACTION, reproduce_dir
 
-OUTPUT_DIR = PROJECT_ROOT / "comparison_results"
+OUTPUT_DIR = reproduce_dir("comparison_results", PROJECT_ROOT)
 
 # Set this to a list of dataset names to run a subset, for example:
 # ["exponential_additive", "logistic_growth"]

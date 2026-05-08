@@ -15,10 +15,11 @@ warnings.filterwarnings(
 )
 
 import toy_data as td
+from reproducibility import reproduce_dir
 
 
-REPO_ROOT = Path(__file__).resolve().parent
-DEFAULT_OUTPUT_DIR = REPO_ROOT / "synthetic_visualizations"
+REPO_ROOT = Path(__file__).resolve().parent.parent
+DEFAULT_OUTPUT_DIR = reproduce_dir("synthetic_visualizations", REPO_ROOT)
 ONE_DIMENSIONAL_DATASETS = [
     "exponential_multiplicative",
     "exponential_additive",

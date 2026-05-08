@@ -24,8 +24,9 @@ import numpy as np
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 import toy_data as td
+from reproducibility import reproduce_dir
 
-OUT_PATH = PROJECT_ROOT / "comparison_results" / "optimizer_trajectories.png"
+OUT_PATH = reproduce_dir("comparison_results", PROJECT_ROOT) / "optimizer_trajectories.png"
 NAVY = "#1E2761"
 
 # ---------------------------------------------------------------------------

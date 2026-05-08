@@ -22,30 +22,38 @@ The **ZZU workflow** bridges both: screen candidate transformations on a validat
 
 ```
 zzu-transformations/
-├── transformation_algorithms.py   # Core algorithm library (Sections 1–15)
-├── toy_data.py                    # Synthetic dataset generators
-├── ZZU_main_with_py_imports.ipynb # Main experiment notebook
-├── transformation_algorithms.ipynb# Algorithm documentation notebook
-├── toy_data.ipynb                 # Dataset documentation notebook
-├── test.py                        # End-to-end validation script
-├── run_comparison.py              # Full benchmark across all 5 datasets
-├── cost_analysis.py               # Time / iterations / model_fn calls
-├── comparison_results/            # Outputs of run_comparison.py + cost_analysis.py
-│   ├── raw_results.csv            #   accuracy: 1 row per (dataset, method, seed)
-│   ├── summary_by_method.csv      #   mean ± std RMSE / R² / convergence
-│   ├── rmse_by_method.png         #   per-dataset bar chart, methods sorted
-│   ├── fit_overlay.png            #   best-fit overlays for the 4 1D datasets
-│   ├── cost_results.csv           #   cost: fit_time_sec, n_iter, n_model_evals
-│   ├── cost_summary.csv           #   mean cost metrics per (dataset, method)
-│   ├── cost_pareto.png            #   RMSE vs fit-time Pareto (log-log)
-│   └── warm_vs_cold.png           #   BFGS warm-start vs cold-start comparison
-├── generated_datasets/            # CSV exports of all five synthetic datasets
+├── scripts/
+│   ├── transformation_algorithms.py    # Core algorithm library (Sections 1–15)
+│   ├── toy_data.py                     # Synthetic dataset generators
+│   ├── reproducibility.py              # Single source of truth for seeds / split sizes
+│   ├── run_comparison.py               # Full benchmark across all 5 synthetic datasets
+│   ├── cost_analysis.py                # Time / iterations / model_fn calls per fit
+│   ├── zzu_inner_method_comparison.py  # Ablation: pure vs ZZU+{GD,GN,BFGS}
+│   ├── visualize_synthetic_data.py     # Per-dataset PNGs + 2x2 overview
+│   ├── build_linearization_figures.py  # 3 pedagogical figures on transforms
+│   └── build_optimizer_trajectories.py # SSE-surface contour + GD/GN/BFGS paths
+├── tests/                          # 158 pytest cases across 7 modules
+├── ZZU_main_with_py_imports.ipynb  # Main experiment notebook
+├── concrete_analysis.ipynb         # Real-world: UCI Concrete Compressive Strength
+├── bike_analysis.ipynb             # Real-world: UCI Bike Sharing
+├── comparison_results/             # Outputs of run_comparison.py + cost_analysis.py +
+│   │                               # zzu_inner_method_comparison.py + figure scripts
+│   ├── raw_results.csv             #   accuracy: 1 row per (dataset, method, seed)
+│   ├── summary_by_method.csv       #   mean ± std RMSE / R² / convergence
+│   ├── rmse_by_method.png          #   per-dataset bar chart, methods sorted
+│   ├── fit_overlay.png             #   best-fit overlays for the 4 1D datasets
+│   ├── cost_results.csv            #   cost: fit_time_sec, n_iter, n_model_evals
+│   ├── cost_summary.csv            #   mean cost metrics per (dataset, method)
+│   ├── cost_pareto.png             #   RMSE vs fit-time Pareto (log-log)
+│   └── warm_vs_cold.png            #   BFGS warm-start vs cold-start comparison
+├── generated_datasets/             # CSV exports of all five synthetic datasets
 │   ├── exponential_multiplicative.csv
 │   ├── exponential_additive.csv
 │   ├── michaelis_menten.csv
 │   ├── logistic_growth.csv
 │   └── multivariable_nonlinear.csv
-└── main (2).tex                   # Project write-up (LaTeX)
+├── synthetic_visualizations/       # Per-dataset PNGs (output of visualize_synthetic_data.py)
+└── main (2).tex                    # Project write-up (LaTeX)
 ```
 
 ---
@@ -216,14 +224,14 @@ you know how to invert back to nonlinear parameters; supply
 
 ```bash
 # Sanity check: all three optimizers + ZZU on one dataset
-python test.py
+python tests/test.py
 
 # Full benchmark: 11 transformed-OLS variants + GD/GN/BFGS + ZZU
 # across all 5 datasets, 10 train/test splits each
-python run_comparison.py
+python scripts/run_comparison.py
 
 # Generate synthetic dataset figures in ./synthetic_visualizations
-python visualize_synthetic_data.py
+python scripts/visualize_synthetic_data.py
 ```
 
 `test.py` prints, for the exponential multiplicative dataset (n=120):
@@ -234,8 +242,9 @@ BFGS: converged=True,  n_iter=24,   RMSE≈7.21, theta≈[2.17, 0.68]
 ZZU:  best_transform=log_smear, converged=True, RMSE≈7.21
 ```
 
-`run_comparison.py` writes raw and summarized CSVs plus two plots to
-`comparison_results/`, and prints the top-3 methods per dataset.
+`scripts/run_comparison.py` writes raw and summarized CSVs plus two
+plots to `comparison_results/`, and prints the top-3 methods per
+dataset.
 
 Dependencies: `numpy`, `pandas`, `matplotlib` (no scipy).
 
@@ -245,9 +254,9 @@ Dependencies: `numpy`, `pandas`, `matplotlib` (no scipy).
 
 All randomness in the codebase flows through `np.random.default_rng(seed)`
 — a *local* generator that does not touch global state. Every default
-seed is registered in [`reproducibility.py`](reproducibility.py) so
-"what random state produced figure X" is answerable in one place rather
-than three:
+seed is registered in [`scripts/reproducibility.py`](scripts/reproducibility.py)
+so "what random state produced figure X" is answerable in one place
+rather than three:
 
 | Constant | Value | Used by |
 |----------|------:|---------|
@@ -274,6 +283,7 @@ To pin down a specific run: pass `seed=` explicitly anywhere it's
 accepted, or import the constants:
 
 ```python
+# From the project root, with scripts/ on PYTHONPATH:
 from reproducibility import N_SEEDS, TEST_FRACTION, make_rng
 
 rng = make_rng(seed=42)              # fresh local generator

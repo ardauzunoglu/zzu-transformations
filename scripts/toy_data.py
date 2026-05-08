@@ -35,7 +35,10 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-DEFAULT_OUTPUT_DIR = Path("generated_datasets")
+from reproducibility import reproduce_dir
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+DEFAULT_OUTPUT_DIR = reproduce_dir("generated_datasets", PROJECT_ROOT)
 
 
 # ---------------------------------------------------------------------------

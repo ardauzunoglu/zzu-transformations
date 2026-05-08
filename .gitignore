@@ -20,3 +20,8 @@ htmlcov/
 main (2).tex
 ZZU_Transformations_Presentation.pptx
 toy_datasets_intro.pptx
+
+
+reproduce/
+generated_datasets/
+synthetic_visualizations/

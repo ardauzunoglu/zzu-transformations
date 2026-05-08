@@ -21,6 +21,7 @@ Usage: python run_comparison.py
 
 from __future__ import annotations
 
+import os
 import sys
 import warnings
 from pathlib import Path
@@ -33,14 +34,15 @@ import numpy as np
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import scripts.transformation_algorithms as ta
-import scripts.toy_data as td
+import transformation_algorithms as ta
+import toy_data as td
 # All benchmark seeds and split sizes live in reproducibility.py — a single
 # source of truth that the writeup can cite without grepping for constants.
-from reproducibility import N_SEEDS, TEST_FRACTION
+from reproducibility import N_SEEDS, TEST_FRACTION, reproduce_dir
 
 
-OUTPUT_DIR = Path("comparison_results")
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+OUTPUT_DIR = reproduce_dir("comparison_results", PROJECT_ROOT)
 
 # Set this to a list of dataset names to run a subset, for example:
 # ["exponential_additive", "logistic_growth"]
@@ -87,7 +89,14 @@ def resolve_datasets(
     Used by every benchmark script so the validation rule lives in one
     place: ``None`` means "all datasets"; otherwise the given names must
     all exist in ``DATASET_SPECS``.
+
+    Setting ``REPRODUCE_DATASETS=all`` in the environment forces the
+    full 5-dataset sweep regardless of the script's ``DATASETS_TO_COMPARE``
+    constant — used for diff-based reproduction against the canonical
+    outputs, which were generated on all five datasets.
     """
+    if os.environ.get("REPRODUCE_DATASETS") == "all":
+        return list(DATASET_SPECS.keys())
     if datasets_to_compare is None:
         datasets_to_compare = DATASETS_TO_COMPARE
     selected = list(DATASET_SPECS.keys()) if datasets_to_compare is None else list(datasets_to_compare)

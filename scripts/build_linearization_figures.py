@@ -34,8 +34,9 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 import toy_data as td
 import transformation_algorithms as ta
+from reproducibility import reproduce_dir
 
-OUT_DIR = PROJECT_ROOT / "comparison_results"
+OUT_DIR = reproduce_dir("comparison_results", PROJECT_ROOT)
 NAVY_HEX = "#1E2761"
 CYAN_HEX = "#4FC3F7"
 RED_HEX = "#E05252"

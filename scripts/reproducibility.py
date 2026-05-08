@@ -67,6 +67,20 @@ def make_rng(seed: int = DEFAULT_SEED) -> np.random.Generator:
     return np.random.default_rng(seed)
 
 
+def reproduce_dir(subfolder: str, default_root):
+    """Resolve a script output directory, honoring ``REPRODUCE_BASE_DIR``.
+
+    If the env var is set, returns ``$REPRODUCE_BASE_DIR/<subfolder>``;
+    otherwise returns ``<default_root>/<subfolder>``.  Every
+    output-writing script wraps its OUTPUT_DIR constant in this helper
+    so a single env var redirects the whole pipeline into a sandbox
+    folder for diff-based validation against the canonical outputs.
+    """
+    from pathlib import Path
+    base = os.environ.get("REPRODUCE_BASE_DIR")
+    return Path(base) / subfolder if base else Path(default_root) / subfolder
+
+
 def seed_everything(seed: int = DEFAULT_SEED) -> np.random.Generator:
     """Defensively seed every PRNG that any library might touch.
 
