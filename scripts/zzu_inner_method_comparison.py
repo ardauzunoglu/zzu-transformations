@@ -45,6 +45,11 @@ from reproducibility import N_SEEDS, TEST_FRACTION
 
 OUTPUT_DIR = PROJECT_ROOT / "comparison_results"
 
+# Set this to a list of dataset names to run a subset, for example:
+# ["exponential_additive", "logistic_growth"]
+# Leave as None to compare across every dataset in DATASET_SPECS.
+DATASETS_TO_COMPARE = ["exponential_multiplicative", "logistic_growth", "multivariable_nonlinear"]
+
 # Method-specific kwargs are tuned to mirror what the standalone nonlinear
 # regressors use elsewhere in the project, so the only thing that changes
 # is the post-screening optimizer choice.
@@ -68,6 +73,10 @@ COLOR = {
 }
 HATCH_BY_VARIANT = {"pure": "//", "zzu": ""}
 ALPHA_BY_VARIANT = {"pure": 0.55, "zzu": 1.0}
+
+
+def _pretty_dataset_name(name: str) -> str:
+    return name.replace("_", " ").title()
 
 
 # ---------------------------------------------------------------------------
@@ -174,7 +183,8 @@ def evaluate_pure(dataset, spec, method, kwargs, seed):
 # ---------------------------------------------------------------------------
 
 def plot_comparison(summary: pd.DataFrame, out_path: Path) -> None:
-    datasets = list(DATASET_SPECS.keys())
+    datasets = list(summary["dataset"].drop_duplicates())
+    dataset_labels = [_pretty_dataset_name(dataset) for dataset in datasets]
     methods = list(METHODS.keys())
     variants = ["pure", "zzu"]
 
@@ -208,7 +218,7 @@ def plot_comparison(summary: pd.DataFrame, out_path: Path) -> None:
         for variant in variants:
             means = [lookup(d, method, variant, "mean_rmse") for d in datasets]
             stds  = [lookup(d, method, variant, "std_rmse") for d in datasets]
-            label = (f"pure {SHORT_LABEL[method]}" if variant == "pure"
+            label = (f"Pure {SHORT_LABEL[method]}" if variant == "pure"
                      else f"ZZU + {SHORT_LABEL[method]}")
             ax.bar(x + offsets[k], means, bar_w,
                    yerr=stds, capsize=2,
@@ -218,10 +228,9 @@ def plot_comparison(summary: pd.DataFrame, out_path: Path) -> None:
                    label=label)
             k += 1
     ax.set_xticks(x)
-    ax.set_xticklabels(datasets, rotation=15, ha="right", fontsize=10)
-    ax.set_ylabel("test RMSE")
+    ax.set_xticklabels(dataset_labels, rotation=0, ha="center", fontsize=10)
+    ax.set_ylabel("RMSE")
     ax.set_yscale("log")
-    ax.set_title("Test RMSE — pure nonlinear vs ZZU-augmented (same optimizer, same data)")
     ax.grid(axis="y", alpha=0.3, which="both")
     ax.legend(ncol=3, fontsize=9, loc="upper left")
 
@@ -231,7 +240,7 @@ def plot_comparison(summary: pd.DataFrame, out_path: Path) -> None:
     for method in methods:
         for variant in variants:
             means = [lookup(d, method, variant, "mean_fit_time") for d in datasets]
-            label = (f"pure {SHORT_LABEL[method]}" if variant == "pure"
+            label = (f"Pure {SHORT_LABEL[method]}" if variant == "pure"
                      else f"ZZU + {SHORT_LABEL[method]}")
             ax.bar(x + offsets[k], means, bar_w,
                    color=COLOR[method], alpha=ALPHA_BY_VARIANT[variant],
@@ -240,18 +249,12 @@ def plot_comparison(summary: pd.DataFrame, out_path: Path) -> None:
                    label=label)
             k += 1
     ax.set_xticks(x)
-    ax.set_xticklabels(datasets, rotation=15, ha="right", fontsize=10)
-    ax.set_ylabel("fit time (s)")
+    ax.set_xticklabels(dataset_labels, rotation=0, ha="center", fontsize=10)
+    ax.set_ylabel("Fit Time (s)")
     ax.set_yscale("log")
-    ax.set_title("Total fit time — ZZU bars include the screening overhead")
     ax.grid(axis="y", alpha=0.3, which="both")
     ax.legend(ncol=3, fontsize=9, loc="upper left")
 
-    fig.suptitle(
-        f"Pure nonlinear vs ZZU-augmented (mean over {N_SEEDS} splits; "
-        f"hatched = pure, solid = ZZU)",
-        fontsize=13,
-    )
     fig.savefig(out_path, dpi=140)
     plt.close(fig)
 
@@ -262,8 +265,16 @@ def plot_comparison(summary: pd.DataFrame, out_path: Path) -> None:
 
 def main():
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    selected_datasets = (
+        list(DATASET_SPECS.keys()) if DATASETS_TO_COMPARE is None else DATASETS_TO_COMPARE
+    )
+    invalid = [name for name in selected_datasets if name not in DATASET_SPECS]
+    if invalid:
+        raise ValueError(f"Unknown dataset(s) in DATASETS_TO_COMPARE: {invalid}")
+
     rows = []
-    for dataset, spec in DATASET_SPECS.items():
+    for dataset in selected_datasets:
+        spec = DATASET_SPECS[dataset]
         print(f"[{dataset}]")
         for method, kwargs in METHODS.items():
             for seed in range(N_SEEDS):

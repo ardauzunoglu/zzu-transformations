@@ -36,22 +36,32 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import transformation_algorithms as ta
 
 from run_comparison import (
     DATASET_SPECS,
     FAMILY_COLOR,
+    FAMILY_LABEL,
     LINEAR_FAMILY,
     NONLINEAR_FAMILY,
     OUTPUT_DIR,
     ZZU_FAMILY,
+    _pretty_dataset_name,
+    _pretty_method_name,
     make_transformed_suite,
     make_zzu,
 )
 # Pull seeds and split size from the central registry so all benchmarks
 # stay synchronized when the project bumps N_SEEDS or TEST_FRACTION.
 from reproducibility import N_SEEDS, TEST_FRACTION
+
+# Set this to a list of dataset names to run a subset, for example:
+# ["exponential_additive", "logistic_growth"]
+# Leave as None to compare across every dataset in DATASET_SPECS.
+DATASETS_TO_COMPARE = ["exponential_multiplicative", "logistic_growth", "multivariable_nonlinear"]
 
 
 # ---------------------------------------------------------------------------
@@ -88,6 +98,29 @@ def _rmse(y_true: np.ndarray, pred: Optional[np.ndarray]) -> float:
     if pred is None or not np.all(np.isfinite(pred)):
         return float("nan")
     return float(ta.regression_metrics(y_true, pred)["rmse"])
+
+
+def _pretty_cost_method_name(name: str) -> str:
+    if name == "BFGS_warmstart":
+        return "BFGS\nWarm"
+    pretty = _pretty_method_name(name)
+    replacements = {
+        "Identity": "Id",
+        "Reciprocal": "Recip",
+        "Power 0.5": "P(0.5)",
+        "Power 2": "P(2)",
+    }
+    for old, new in replacements.items():
+        pretty = pretty.replace(old, new)
+    return pretty
+
+
+def _selected_dataset_names() -> List[str]:
+    selected = list(DATASET_SPECS.keys()) if DATASETS_TO_COMPARE is None else DATASETS_TO_COMPARE
+    invalid = [name for name in selected if name not in DATASET_SPECS]
+    if invalid:
+        raise ValueError(f"Unknown dataset(s) in DATASETS_TO_COMPARE: {invalid}")
+    return selected
 
 
 def cost_row(
@@ -273,68 +306,90 @@ def _draw_pareto_panel(ax, sub: pd.DataFrame, *, dataset: str,
             continue
         ax.scatter(
             s["mean_fit_time_sec"], s["mean_rmse"],
-            s=70, c=color, edgecolor="black", label=family, zorder=3,
+            s=70, c=color, edgecolor="black", label=FAMILY_LABEL[family], zorder=3,
         )
         for _, r in s.iterrows():
             texts.append(ax.text(
-                r["mean_fit_time_sec"], r["mean_rmse"], r["method"],
-                fontsize=9, color="black", alpha=0.95, zorder=4,
+                r["mean_fit_time_sec"], r["mean_rmse"], _pretty_cost_method_name(r["method"]),
+                fontsize=7, color="black", alpha=0.95, zorder=4,
+                bbox=dict(boxstyle="round,pad=0.18", fc="white", ec="none", alpha=0.78),
             ))
 
     ax.set_xscale("log")
     ax.set_yscale("log")
-    ax.set_xlabel("fit time (s)")
-    ax.set_ylabel("test RMSE")
-    ax.set_title(dataset, fontsize=12, fontweight="bold")
+    ax.set_xlabel("Fit Time (s)")
+    ax.set_ylabel("RMSE")
+    ax.set_title(_pretty_dataset_name(dataset), fontsize=12, fontweight="bold")
     ax.grid(alpha=0.3, which="both")
 
     # Add a bit of headroom on both axes for label placement.
     y0, y1 = ax.get_ylim()
-    ax.set_ylim(y0 * 0.85, y1 * 1.6)
+    ax.set_ylim(y0 * 0.8, y1 * 2.0)
     x0, x1 = ax.get_xlim()
-    ax.set_xlim(x0 * 0.7, x1 * 1.4)
+    ax.set_xlim(x0 * 0.65, x1 * 1.6)
 
     if adjust_text is not None and texts:
         adjust_text(
             texts, ax=ax,
             arrowprops=dict(arrowstyle="-", color="gray",
                             lw=0.6, alpha=0.7),
-            expand=(1.2, 1.6),
-            force_text=(0.6, 0.8),
-            force_points=(0.4, 0.6),
+            expand=(1.35, 1.9),
+            force_text=(0.9, 1.1),
+            force_points=(0.6, 0.8),
         )
     else:
-        # Fallback: rotated labels with offset (less reliable).
-        for txt, (xp, yp) in zip(
-            texts,
-            [(ax.lines[0].get_xydata()[0])] if False else
-            [(t.get_position()) for t in texts],
-        ):
-            txt.set_rotation(32)
-            txt.set_horizontalalignment("left")
-            txt.set_verticalalignment("bottom")
+        # Fallback when adjustText is unavailable: spread labels with fixed
+        # screen-space offsets so nearby points do not sit directly on top of
+        # one another.
+        offsets = [
+            (6, 8), (6, 18), (6, -14), (-6, 10), (-6, 20), (-6, -16),
+            (14, 0), (14, 12), (14, -12), (-14, 0), (-14, 12), (-14, -12),
+        ]
+        for i, txt in enumerate(texts):
+            xp, yp = txt.get_position()
+            dx, dy = offsets[i % len(offsets)]
+            txt.set_position((xp, yp))
+            txt.set_transform(ax.transData)
+            txt.set_visible(False)
+            ax.annotate(
+                txt.get_text(),
+                xy=(xp, yp),
+                xytext=(dx, dy),
+                textcoords="offset points",
+                fontsize=7,
+                ha="left" if dx >= 0 else "right",
+                va="bottom" if dy >= 0 else "top",
+                bbox=dict(boxstyle="round,pad=0.18", fc="white", ec="none", alpha=0.78),
+                arrowprops=dict(arrowstyle="-", color="gray", lw=0.5, alpha=0.6),
+                zorder=4,
+            )
 
     if show_legend:
         ax.legend(loc="upper right", fontsize=9)
 
 
 def plot_pareto(summary: pd.DataFrame, out_path: Path) -> None:
-    """Combined view: 1×5 grid of Pareto panels."""
-    datasets = list(DATASET_SPECS.keys())
+    """Combined view: multi-panel grid of Pareto plots."""
+    datasets = list(summary["dataset"].drop_duplicates())
     n = len(datasets)
-    fig, axes = plt.subplots(1, n, figsize=(4.5 * n, 5.0),
-                             constrained_layout=True)
-    if n == 1:
-        axes = [axes]
+    ncols = min(3, n)
+    nrows = int(np.ceil(n / ncols))
+    fig, axes = plt.subplots(
+        nrows, ncols, figsize=(5.4 * ncols, 5.4 * nrows), constrained_layout=True
+    )
+    axes = np.atleast_1d(axes).ravel()
 
     for ax, dataset in zip(axes, datasets):
         sub = summary[(summary["dataset"] == dataset)
                       & summary["mean_rmse"].notna()]
         _draw_pareto_panel(ax, sub, dataset=dataset, show_legend=False)
 
-    axes[-1].legend(loc="best", fontsize=9)
-    fig.suptitle(f"Cost-vs-accuracy Pareto (mean over {N_SEEDS} splits)",
-                 fontsize=13)
+    for ax in axes[len(datasets):]:
+        ax.set_visible(False)
+
+    axes[min(len(datasets), len(axes)) - 1].legend(loc="best", fontsize=9)
+    #fig.suptitle(f"Cost-vs-accuracy Pareto (mean over {N_SEEDS} splits)",
+    #             fontsize=13)
     fig.savefig(out_path, dpi=130)
     plt.close(fig)
 
@@ -344,14 +399,14 @@ def plot_pareto_per_dataset(summary: pd.DataFrame, out_dir: Path) -> list:
     have enough room to be readable.  Returns the list of paths written."""
     out_dir.mkdir(parents=True, exist_ok=True)
     paths = []
-    for dataset in DATASET_SPECS.keys():
+    for dataset in summary["dataset"].drop_duplicates():
         sub = summary[(summary["dataset"] == dataset)
                       & summary["mean_rmse"].notna()]
         if sub.empty:
             continue
         fig, ax = plt.subplots(figsize=(10, 6.5), constrained_layout=True)
         _draw_pareto_panel(ax, sub, dataset=dataset, show_legend=True)
-        fig.suptitle(f"Cost vs. accuracy — {dataset}  "
+        fig.suptitle(f"Cost vs. Accuracy — {_pretty_dataset_name(dataset)}  "
                      f"(mean over {N_SEEDS} splits)", fontsize=13)
         out = out_dir / f"cost_pareto_{dataset}.png"
         fig.savefig(out, dpi=140)
@@ -410,9 +465,11 @@ def plot_warm_vs_cold(raw: pd.DataFrame, out_path: Path) -> None:
 
 def main() -> None:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    selected_datasets = _selected_dataset_names()
 
     rows: List[Dict[str, Any]] = []
-    for dataset, spec in DATASET_SPECS.items():
+    for dataset in selected_datasets:
+        spec = DATASET_SPECS[dataset]
         bundle = spec["generator"]()
         X_full = bundle.X.values
         y_full = bundle.y.values
@@ -442,7 +499,7 @@ def main() -> None:
 
     # --- Console summary -----------------------------------------------------
     print("\nMean cost per method (cheapest 5 per dataset):")
-    for dataset in DATASET_SPECS:
+    for dataset in selected_datasets:
         sub = summary[summary["dataset"] == dataset].nsmallest(5, "mean_fit_time_sec")
         print(f"\n[{dataset}]")
         cols = ["method", "family", "mean_rmse",

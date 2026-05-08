@@ -33,8 +33,8 @@ import numpy as np
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import transformation_algorithms as ta
-import toy_data as td
+import scripts.transformation_algorithms as ta
+import scripts.toy_data as td
 # All benchmark seeds and split sizes live in reproducibility.py — a single
 # source of truth that the writeup can cite without grepping for constants.
 from reproducibility import N_SEEDS, TEST_FRACTION
@@ -42,10 +42,49 @@ from reproducibility import N_SEEDS, TEST_FRACTION
 
 OUTPUT_DIR = Path("comparison_results")
 
+# Set this to a list of dataset names to run a subset, for example:
+# ["exponential_additive", "logistic_growth"]
+# Leave as None to compare across every dataset in DATASET_SPECS.
+DATASETS_TO_COMPARE = ["exponential_multiplicative", "logistic_growth", "multivariable_nonlinear"]
+
 # Method-family tagging for plotting.
 LINEAR_FAMILY = "linearized_ols"
 NONLINEAR_FAMILY = "nonlinear"
 ZZU_FAMILY = "zzu_hybrid"
+
+
+def _pretty_dataset_name(name: str) -> str:
+    return name.replace("_", " ").title()
+
+
+def _pretty_method_name(name: str) -> str:
+    replacements = {
+        "yeojohnson": "Y-J",
+        "boxcox": "B-C",
+        "reciprocal": "Reciprocal",
+        "identity": "Identity",
+        "log": "Log",
+        "power": "Power",
+        "smear": "smear",
+    }
+    parts = name.split("_")
+    pretty_parts = [
+        replacements.get(part, part)
+        for part in parts
+        if part not in {"no", "smear"}
+    ]
+    if name.endswith("_smear") and not name.endswith("_no_smear"):
+        pretty_parts.append("+ Smear")
+    pretty = " ".join(pretty_parts)
+    return pretty.replace(" + Smear", "\n+ Smear")
+
+
+def _selected_dataset_names() -> List[str]:
+    selected = list(DATASET_SPECS.keys()) if DATASETS_TO_COMPARE is None else DATASETS_TO_COMPARE
+    invalid = [name for name in selected if name not in DATASET_SPECS]
+    if invalid:
+        raise ValueError(f"Unknown dataset(s) in DATASETS_TO_COMPARE: {invalid}")
+    return selected
 
 
 # ---------------------------------------------------------------------------
@@ -346,12 +385,18 @@ FAMILY_COLOR = {
     ZZU_FAMILY: "#54A24B",
 }
 
+FAMILY_LABEL = {
+    LINEAR_FAMILY: "Linearized OLS",
+    NONLINEAR_FAMILY: "Nonlinear",
+    ZZU_FAMILY: "ZZU Hybrid",
+}
+
 
 def plot_rmse_by_method(summary: pd.DataFrame, out_path: Path) -> None:
     """One subplot per dataset, bar chart of mean RMSE per method."""
-    datasets = list(DATASET_SPECS.keys())
+    datasets = list(summary["dataset"].drop_duplicates())
     n = len(datasets)
-    fig, axes = plt.subplots(n, 1, figsize=(13, 3.0 * n), constrained_layout=True)
+    fig, axes = plt.subplots(n, 1, figsize=(16, 3.2 * n), constrained_layout=False)
     if n == 1:
         axes = [axes]
 
@@ -368,9 +413,14 @@ def plot_rmse_by_method(summary: pd.DataFrame, out_path: Path) -> None:
             color=colors, edgecolor="black", linewidth=0.5, capsize=3,
         )
         ax.set_xticks(x)
-        ax.set_xticklabels(sub["method"].values, rotation=40, ha="right", fontsize=8)
-        ax.set_ylabel("RMSE (test)")
-        ax.set_title(f"{dataset}  —  mean ± std over {N_SEEDS} splits")
+        ax.set_xticklabels(
+            [_pretty_method_name(method) for method in sub["method"].values],
+            rotation=0,
+            ha="center",
+            fontsize=7,
+        )
+        ax.set_ylabel("RMSE")
+        ax.set_title(_pretty_dataset_name(dataset))
         ax.set_yscale("log")
         ax.grid(axis="y", alpha=0.3, which="both")
 
@@ -378,24 +428,35 @@ def plot_rmse_by_method(summary: pd.DataFrame, out_path: Path) -> None:
         plt.Rectangle((0, 0), 1, 1, fc=c, ec="black") for c in FAMILY_COLOR.values()
     ]
     fig.legend(
-        handles, list(FAMILY_COLOR.keys()),
-        loc="upper right", ncol=3, fontsize=9,
+        handles, [FAMILY_LABEL[family] for family in FAMILY_COLOR],
+        loc="upper center", bbox_to_anchor=(0.5, 0.985), ncol=3, fontsize=10,
+        frameon=False,
     )
+    fig.tight_layout(rect=(0, 0, 1, 0.94))
     fig.savefig(out_path, dpi=130)
     plt.close(fig)
 
 
-def plot_fit_overlay(out_path: Path, seed: int = 0) -> None:
+def plot_fit_overlay(out_path: Path, datasets: List[str], seed: int = 0) -> None:
     """Best-fit overlays for the four 1D datasets at a single representative seed."""
-    one_d = [
+    one_d_all = [
         "exponential_multiplicative",
         "exponential_additive",
         "michaelis_menten",
         "logistic_growth",
     ]
-    fig, axes = plt.subplots(2, 2, figsize=(13, 9), constrained_layout=True)
+    one_d = [dataset for dataset in one_d_all if dataset in datasets]
+    if not one_d:
+        return
 
-    for ax, dataset in zip(axes.ravel(), one_d):
+    ncols = 2
+    nrows = int(np.ceil(len(one_d) / ncols))
+    fig, axes = plt.subplots(
+        nrows, ncols, figsize=(13, 4.5 * nrows), constrained_layout=True
+    )
+    axes = np.atleast_1d(axes).ravel()
+
+    for ax, dataset in zip(axes, one_d):
         spec = DATASET_SPECS[dataset]
         bundle = spec["generator"]()
         X_full = bundle.X.values
@@ -454,10 +515,13 @@ def plot_fit_overlay(out_path: Path, seed: int = 0) -> None:
                 x[order], zzu_pred_full[order],
                 lw=1.8, color=FAMILY_COLOR[ZZU_FAMILY], label="ZZU",
             )
-        ax.set_title(dataset)
+        ax.set_title(_pretty_dataset_name(dataset))
         ax.set_xlabel(bundle.X.columns[0])
         ax.set_ylabel("y")
         ax.legend(fontsize=8)
+
+    for ax in axes[len(one_d):]:
+        ax.set_visible(False)
 
     fig.suptitle(f"Best-fit overlays (seed={seed})", fontsize=12)
     fig.savefig(out_path, dpi=130)
@@ -487,9 +551,11 @@ def summarize(raw: pd.DataFrame) -> pd.DataFrame:
 
 def main() -> None:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    selected_datasets = _selected_dataset_names()
 
     all_rows: List[Dict[str, Any]] = []
-    for dataset, spec in DATASET_SPECS.items():
+    for dataset in selected_datasets:
+        spec = DATASET_SPECS[dataset]
         bundle = spec["generator"]()
         X_full = bundle.X.values
         y_full = bundle.y.values
@@ -511,12 +577,12 @@ def main() -> None:
     print(f"Wrote summary to {OUTPUT_DIR / 'summary_by_method.csv'}")
 
     plot_rmse_by_method(summary, OUTPUT_DIR / "rmse_by_method.png")
-    plot_fit_overlay(OUTPUT_DIR / "fit_overlay.png", seed=0)
+    plot_fit_overlay(OUTPUT_DIR / "fit_overlay.png", selected_datasets, seed=0)
     print(f"Wrote plots to {OUTPUT_DIR}/")
 
     # Print the top-3 methods per dataset for a quick console scan.
     print("\nTop 3 methods (by mean test RMSE) per dataset:")
-    for dataset in DATASET_SPECS:
+    for dataset in selected_datasets:
         sub = summary[summary["dataset"] == dataset].head(3)
         print(f"\n[{dataset}]")
         print(sub[["method", "family", "mean_rmse", "std_rmse",
