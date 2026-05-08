@@ -450,6 +450,20 @@ It also adds a special row, `BFGS_warmstart`: BFGS started from the
 screening overhead in the timer. This isolates "does the warm start
 help?" from "does the screening overhead pay off?".
 
+> **Note on `mean_fit_time_sec` (wall-clock vs deterministic cost).**
+> Fit time is measured with `time.perf_counter()`, so it varies
+> run-to-run with CPU load and kernel scheduling — typically 5–20% on
+> long fits (GD), higher relative jitter on sub-millisecond fits
+> (BFGS / GN). Iteration counts and `mean_n_model_evals` are
+> deterministic up to 1-ULP propagation in the dataset, so for cost
+> comparisons that need to be **stable across runs use
+> `mean_n_model_evals`** (the work count: number of `model_fn` calls,
+> which captures Jacobian work since each numerical Jacobian costs
+> `2p` calls). The relative ranking between method families is
+> preserved either way — GD is always ~100× slower than BFGS, ZZU's
+> overhead over BFGS is always ~2–3× — but absolute milliseconds will
+> shift between runs.
+
 ### 9.1 Outputs
 
 | File | Content |
