@@ -1,63 +1,46 @@
-#!/usr/bin/env python
-# coding: utf-8
+"""Synthetic dataset generators for the ZZU comparison.
 
-# 
-# # ZZU Toy Dataset Generators
-# 
-# This notebook provides a consistent, well-documented set of toy and synthetic dataset generators for comparing transformation-based linearization, direct nonlinear regression, and hybrid methods.
-# 
-# The generators focus on the following functions:
-# 
-# 1. Exponential growth with **multiplicative lognormal noise**,
-# 2. Exponential growth with **additive Gaussian noise**,
-# 3. A saturating nonlinear curve: **Michaelis-Menten** and **logistic growth** alternatives,
-# 4. A **multivariable nonlinear dataset** combining exponential, power-law, and reciprocal effects.
-# 
-# Each generator returns a `DatasetBundle` containing:
-# 
-# - `X`: predictor dataframe
-# - `y`: observed noisy response
-# - `y_true`: noiseless signal from the known data-generating process
-# - `params`: all generation parameters needed for reproducibility and reporting
-# - `description`: a short explanation of what the dataset is designed to test
-# 
+This module provides five toy / synthetic dataset generators used to
+benchmark transformation-based linearization, direct nonlinear
+regression, and the ZZU hybrid workflow.  All generators return a
+``DatasetBundle`` containing:
 
-# 
-# ## 1. Imports and global settings
-# 
+  - ``X``           : predictor DataFrame
+  - ``y``           : observed noisy response
+  - ``y_true``      : noiseless signal from the known data-generating process
+  - ``params``      : all generation parameters needed to reproduce the dataset
+  - ``description`` : human-readable explanation of the dataset's purpose
 
-# In[2]:
+Functional forms covered:
+  1. Exponential growth with multiplicative lognormal noise
+     — favors log linearization.
+  2. Exponential growth with additive Gaussian noise
+     — failure mode for naïve log linearization.
+  3. Saturating curves (Michaelis-Menten and logistic growth)
+     — no clean global linearization; tests reciprocal / S-curve fits.
+  4. Multivariable nonlinear with mixed exp / power / reciprocal terms
+     — designed so no single transform fully linearizes the response.
 
+Importing this module is side-effect-free.  Run ``python toy_data.py``
+directly to regenerate the CSV exports under ``generated_datasets/``.
+"""
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, Mapping, Optional, Tuple
+from typing import Any, Callable, Dict, Mapping, Optional, Tuple
 
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
 
-pd.set_option("display.precision", 4)
-pd.set_option("display.max_columns", 20)
 DEFAULT_OUTPUT_DIR = Path("generated_datasets")
 
 
-# 
-# ## 2. Shared data container and utility functions
-# 
-# ```python
-# bundle = make_some_dataset(n=200, seed=123, ...)
-# bundle.X        # predictors
-# bundle.y        # noisy observed response
-# bundle.y_true   # noiseless signal
-# bundle.to_frame()
-# ```
-# 
-
-# In[3]:
-
+# ---------------------------------------------------------------------------
+# Shared data container and noise utilities
+# ---------------------------------------------------------------------------
 
 @dataclass(frozen=True)
 class DatasetBundle:
@@ -117,15 +100,6 @@ class DatasetBundle:
         )
 
 
-def make_rng(seed: Optional[int] = None) -> np.random.Generator:
-    """Create a NumPy random number generator.
-
-    Using ``np.random.default_rng`` keeps the generators reproducible without
-    touching NumPy's global random state.
-    """
-    return np.random.default_rng(seed)
-
-
 def evenly_spaced_x(n: int, x_min: float, x_max: float, name: str = "x") -> pd.DataFrame:
     """Create a one-column DataFrame with evenly spaced predictor values."""
     if n <= 1:
@@ -180,12 +154,12 @@ def train_test_split_bundle(
 ) -> Tuple[DatasetBundle, DatasetBundle]:
     """Split a DatasetBundle into train and test bundles.
 
-    This avoids a dependency on scikit-learn and keeps the notebook self-contained.
+    Avoids a scikit-learn dependency and preserves the DatasetBundle interface.
     """
     if not 0 < test_size < 1:
         raise ValueError("test_size must be between 0 and 1.")
 
-    rng = make_rng(seed)
+    rng = np.random.default_rng(seed)
     n = len(bundle.y)
     indices = rng.permutation(n)
     n_test = int(round(test_size * n))
@@ -211,18 +185,13 @@ def train_test_split_bundle(
     return subset(train_idx, "train"), subset(test_idx, "test")
 
 
-# 
-# ## 3. Dataset 1: Exponential Growth with Multiplicative Noise
-# 
-# This is a clean case for log-linearization. Since the noise is multiplicative, taking logs produces an additive-noise model:
-# 
-# $\log y = \log a + bx + \varepsilon, \qquad \varepsilon \sim N(0, \sigma^2).$
-# 
-# This dataset is expected to favor log-linearization, especially when model evaluation is done on the transformed scale or with an appropriate retransformation correction.
-# 
-
-# In[4]:
-
+# ---------------------------------------------------------------------------
+# Dataset 1: Exponential growth with multiplicative lognormal noise
+#
+# y = a * exp(b*x) * eta,   log(eta) ~ N(0, log_sigma^2)
+# Best-case for log-linearization: log(y) is exactly linear in x with
+# additive Gaussian noise.
+# ---------------------------------------------------------------------------
 
 def make_exponential_multiplicative(
     n: int = 120,
@@ -250,7 +219,7 @@ def make_exponential_multiplicative(
     if a <= 0:
         raise ValueError("a must be positive.")
 
-    rng = make_rng(seed)
+    rng = np.random.default_rng(seed)
     X = evenly_spaced_x(n, x_min, x_max)
     x = X["x"].to_numpy()
     y_true_values = a * np.exp(b * x)
@@ -287,22 +256,14 @@ def make_exponential_multiplicative(
     )
 
 
-# 
-# ## 4. Dataset 2: Exponential Growth with Additive Noise
-# 
-# This looks similar to the previous dataset, but it is intentionally different. The noise is additive on the original scale:
-# 
-# $y = ae^{bx} + \varepsilon.$
-# 
-# Taking logs no longer gives a clean linear model, because
-# 
-# $\log(ae^{bx} + \varepsilon)$
-# 
-# is not simply a linear function plus Gaussian noise. This dataset is useful for demonstrating residual distortion and retransformation bias.
-# 
-
-# In[5]:
-
+# ---------------------------------------------------------------------------
+# Dataset 2: Exponential growth with additive Gaussian noise
+#
+# y = a * exp(b*x) + epsilon,   epsilon ~ N(0, sigma^2)
+# Failure mode for naive log-linearization: log(a*exp(bx) + epsilon) is
+# not a linear function plus Gaussian noise.  Used to show residual
+# distortion and retransformation bias.
+# ---------------------------------------------------------------------------
 
 def make_exponential_additive(
     n: int = 120,
@@ -335,7 +296,7 @@ def make_exponential_additive(
     if min_y <= 0:
         raise ValueError("min_y must be positive.")
 
-    rng = make_rng(seed)
+    rng = np.random.default_rng(seed)
     X = evenly_spaced_x(n, x_min, x_max)
     x = X["x"].to_numpy()
     y_true_values = a * np.exp(b * x)
@@ -369,16 +330,13 @@ def make_exponential_additive(
     )
 
 
-# 
-# ## 5. Dataset 3A: Michaelis-Menten Saturation Curve
-# 
-# This dataset represents a saturating nonlinear relationship:
-# 
-# $y = \frac{V_{\max}x}{K_m + x} + \varepsilon.$
-# 
-
-# In[6]:
-
+# ---------------------------------------------------------------------------
+# Dataset 3a: Michaelis-Menten saturation curve
+#
+# y = Vmax * x / (Km + x) + epsilon
+# Saturating monotone curve.  Tests reciprocal-style linearization
+# (1/y ~ 1/x) versus direct nonlinear fitting.
+# ---------------------------------------------------------------------------
 
 def make_michaelis_menten(
     n: int = 120,
@@ -411,7 +369,7 @@ def make_michaelis_menten(
     if min_y <= 0:
         raise ValueError("min_y must be positive.")
 
-    rng = make_rng(seed)
+    rng = np.random.default_rng(seed)
     X = evenly_spaced_x(n, x_min, x_max)
     x = X["x"].to_numpy()
     y_true_values = vmax * x / (km + x)
@@ -445,18 +403,13 @@ def make_michaelis_menten(
     )
 
 
-# 
-# ## 6. Dataset 3B: Logistic Growth Curve
-# 
-# The logistic curve is another good choice for the third recommended dataset:
-# 
-# $y = \frac{L}{1 + e^{-k(x - x_0)}} + \varepsilon.$
-# 
-# This one is especially useful for studying sensitivity to initialization in gradient descent, Gauss-Newton, and BFGS.
-# 
-
-# In[7]:
-
+# ---------------------------------------------------------------------------
+# Dataset 3b: Logistic growth (S-curve)
+#
+# y = L / (1 + exp(-k * (x - x0))) + epsilon
+# Useful for stress-testing nonlinear-optimizer initialization sensitivity:
+# poor initial guesses for L, k, or x0 lead to slow or unstable convergence.
+# ---------------------------------------------------------------------------
 
 def make_logistic_growth(
     n: int = 140,
@@ -487,7 +440,7 @@ def make_logistic_growth(
     if k == 0:
         raise ValueError("k must be nonzero.")
 
-    rng = make_rng(seed)
+    rng = np.random.default_rng(seed)
     X = evenly_spaced_x(n, x_min, x_max)
     x = X["x"].to_numpy()
     y_true_values = L / (1.0 + np.exp(-k * (x - x0)))
@@ -518,17 +471,16 @@ def make_logistic_growth(
     )
 
 
-# 
-# ## 7. Dataset 4: Multivariable Nonlinear Dataset
-# 
-# This is the most important synthetic dataset for demonstrating a hybrid workflow because no single simple transformation fully linearizes the full data-generating process:
-# 
-# $y = 2e^{0.4x_1} + 3x_2^{1.5} + \frac{10}{1+x_3} + \varepsilon.$
-# 
-# It mixes exponential, power-law, and reciprocal components, allowing you to test robustness across repeated splits, noise levels, and initialization strategies.
-
-# In[8]:
-
+# ---------------------------------------------------------------------------
+# Dataset 4: Multivariable nonlinear
+#
+# y = exp_coef * exp(exp_rate * x1)
+#   + power_coef * x2 ** power
+#   + reciprocal_coef / (1 + x3)
+#   + epsilon
+# Designed so no single global response transformation fully linearizes
+# the model — the headline benchmark for ZZU's screening + warm-start hybrid.
+# ---------------------------------------------------------------------------
 
 def make_multivariable_nonlinear(
     n: int = 500,
@@ -570,7 +522,7 @@ def make_multivariable_nonlinear(
     if n <= 0:
         raise ValueError("n must be positive.")
 
-    rng = make_rng(seed)
+    rng = np.random.default_rng(seed)
     x1 = rng.uniform(*x1_range, size=n)
     x2 = rng.uniform(*x2_range, size=n)
     x3 = rng.uniform(*x3_range, size=n)
@@ -611,14 +563,9 @@ def make_multivariable_nonlinear(
     )
 
 
-# 
-# ## 8. Generation
-# 
-# Following code makes it easy to generate a consistent benchmark suite and loop over datasets during experiments.
-# 
-
-# In[9]:
-
+# ---------------------------------------------------------------------------
+# Default suite, summary, and CSV export helpers
+# ---------------------------------------------------------------------------
 
 DATASET_GENERATORS: Mapping[str, Callable[..., DatasetBundle]] = {
     "exponential_multiplicative": make_exponential_multiplicative,
@@ -627,6 +574,7 @@ DATASET_GENERATORS: Mapping[str, Callable[..., DatasetBundle]] = {
     "logistic_growth": make_logistic_growth,
     "multivariable_nonlinear": make_multivariable_nonlinear,
 }
+
 
 def generate_default_suite() -> Dict[str, DatasetBundle]:
     """Generate all default benchmark datasets.
@@ -676,28 +624,9 @@ def export_suite_to_csv(
     return written
 
 
-# In[10]:
-
-
-suite = generate_default_suite()
-summary = summarize_suite(suite)
-summary
-
-
-# In[11]:
-
-
-# Inspect
-suite["exponential_multiplicative"].to_frame().head()
-
-
-# ## 10. Plotting Helpers
-# 
-# The following functions provide quick sanity checks. They are not modeling functions; they only visualize the generated data and the known noiseless signal.
-# 
-
-# In[12]:
-
+# ---------------------------------------------------------------------------
+# Plotting helpers (sanity-check visualizations; not part of the modeling pipeline)
+# ---------------------------------------------------------------------------
 
 def plot_one_dimensional_dataset(
     bundle: DatasetBundle,
@@ -746,114 +675,23 @@ def plot_multivariable_marginals(
     return fig
 
 
-# In[13]:
+# ---------------------------------------------------------------------------
+# CLI entry point: regenerate CSV exports and print summary
+# ---------------------------------------------------------------------------
 
+def main(output_dir: Path | str = DEFAULT_OUTPUT_DIR) -> None:
+    """Regenerate every default dataset, write CSVs, and print a summary.
 
-# Visualize 1D datasets.
-
-one_d_names = [
-    "exponential_multiplicative",
-    "exponential_additive",
-    "michaelis_menten",
-    "logistic_growth",
-]
-
-fig, axes = plt.subplots(2, 2, figsize=(13, 8), constrained_layout=True)
-for ax, name in zip(axes.ravel(), one_d_names):
-    plot_one_dimensional_dataset(suite[name], ax=ax)
-plt.show()
-
-
-# In[14]:
-
-
-# Visualize multi-dim dataset.
-plot_multivariable_marginals(suite["multivariable_nonlinear"])
-plt.show()
-
-
-# 
-# ## 11. Split datasets into train and test subsets.
-# 
-# This helper keeps splits reproducible and preserves the same `DatasetBundle` interface.
-# 
-
-# In[16]:
-
-
-train_bundle, test_bundle = train_test_split_bundle(
-    suite["multivariable_nonlinear"],
-    test_size=0.2,
-    seed=2026,
-)
-
-pd.DataFrame([train_bundle.summary(), test_bundle.summary()]).set_index("name")
-
-
-# 
-# ## 12. Noise-level stress tests
-# 
-# For robustness experiments, generate the same functional form across several noise levels. This is especially useful for RMSE/MAE/R² comparisons across repeated splits.
-# 
-
-# In[18]:
-
-
-def generate_noise_grid(
-    generator: Callable[..., DatasetBundle],
-    noise_param: str,
-    noise_values: Iterable[float],
-    base_seed: int = 1000,
-    **fixed_kwargs: Any,
-) -> Dict[str, DatasetBundle]:
-    """Generate multiple versions of a dataset across noise levels.
-
-    Parameters
-    ----------
-    generator:
-        A dataset generator function from the registry.
-    noise_param:
-        Name of the generator argument controlling noise, such as ``"sigma"``
-        or ``"log_sigma"``.
-    noise_values:
-        Iterable of noise levels to test.
-    base_seed:
-        First seed used; each later noise level increments this seed by one.
-    fixed_kwargs:
-        Other generator arguments held constant.
+    Pass ``output_dir`` to write into a sibling folder if you want to
+    diff against the canonical ``generated_datasets/`` instead of
+    overwriting it.
     """
-    out = {}
-    for i, value in enumerate(noise_values):
-        kwargs = dict(fixed_kwargs)
-        kwargs[noise_param] = value
-        kwargs["seed"] = base_seed + i
-        bundle = generator(**kwargs)
-        key = f"{bundle.name}_{noise_param}_{value:g}"
-        out[key] = bundle
-    return out
-
-noise_grid = generate_noise_grid(
-    make_exponential_additive,
-    noise_param="sigma",
-    noise_values=[1.0, 3.0, 5.0, 8.0],
-    n=120,
-)
-
-summarize_suite(noise_grid)
+    out = Path(output_dir)
+    suite = generate_default_suite()
+    written = export_suite_to_csv(suite, output_dir=out)
+    print(summarize_suite(suite))
+    print(f"\nWrote {len(written)} CSV files to {out}/")
 
 
-# 
-# ## 13. CSV Export
-
-# In[17]:
-
-
-written_files = export_suite_to_csv(suite, output_dir=DEFAULT_OUTPUT_DIR)
-written_files
-
-
-# In[ ]:
-
-
-
-
+if __name__ == "__main__":
+    main()

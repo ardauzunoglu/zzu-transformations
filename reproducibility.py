@@ -32,10 +32,6 @@ import random as _stdlib_random
 import numpy as np
 
 
-# ---------------------------------------------------------------------------
-# Project-wide constants
-# ---------------------------------------------------------------------------
-
 #: Number of repeated train/test splits used by every benchmark in
 #: run_comparison.py, cost_analysis.py, and zzu_inner_method_comparison.py.
 #: Seeds 0..N_SEEDS-1 are passed to ``train_test_split_arrays``.
@@ -53,7 +49,6 @@ DEFAULT_SEED: int = 123
 ZZU_VALIDATION_SEED: int = 0
 
 #: Per-dataset seeds, synchronized with the defaults in toy_data.py.
-#: Listed here so the writeup can cite them without grepping the generators.
 DATASET_SEEDS: dict[str, int] = {
     "exponential_multiplicative": 101,
     "exponential_additive":       102,
@@ -63,14 +58,10 @@ DATASET_SEEDS: dict[str, int] = {
 }
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
 def make_rng(seed: int = DEFAULT_SEED) -> np.random.Generator:
     """Return a fresh ``np.random.Generator`` seeded with `seed`.
 
-    Use this in any new code that needs randomness — never
+    Use this in any new code that needs randomness, never do
     ``np.random.normal(...)`` etc., which read from the global state.
     """
     return np.random.default_rng(seed)
