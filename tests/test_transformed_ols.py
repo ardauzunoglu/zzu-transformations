@@ -1,5 +1,5 @@
 """Tests for the TransformedOLS class and the original-scale evaluation
-helpers (Sections 7-9 of transformation_algorithms.py).
+helpers (Sections 7-9 of algorithms.py).
 
 Covers:
   - end-to-end fit/predict accuracy for each transform family
@@ -13,7 +13,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-import transformation_algorithms as ta
+import algorithms as ta
 
 
 # ---------------------------------------------------------------------------

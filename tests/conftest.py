@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 
 # Make the project root and scripts/ both importable so the tests find
-# `reproducibility` (root) plus `transformation_algorithms` and `toy_data`
+# `reproducibility` (root) plus `algorithms` and `toy_data`
 # (scripts/) regardless of how pytest is invoked.
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))

@@ -1,5 +1,5 @@
 """Tests for the ZZUTransformRegressor end-to-end workflow
-(Section 14 of transformation_algorithms.py).
+(Section 14 of algorithms.py).
 
 Covers:
   - 3-step pipeline runs to a low RMSE on log-linear-friendly data
@@ -15,7 +15,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-import transformation_algorithms as ta
+import algorithms as ta
 
 
 GOOD_INIT = np.array([1.0, 0.1])

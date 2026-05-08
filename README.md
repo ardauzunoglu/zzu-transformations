@@ -23,7 +23,7 @@ The **ZZU workflow** bridges both: screen candidate transformations on a validat
 ```
 zzu-transformations/
 ├── scripts/
-│   ├── transformation_algorithms.py    # Core algorithm library (Sections 1–15)
+│   ├── algorithms.py                   # Core algorithm library (Sections 1–15)
 │   ├── toy_data.py                     # Synthetic dataset generators
 │   ├── reproducibility.py              # Single source of truth for seeds / split sizes
 │   ├── run_comparison.py               # Full benchmark across all 5 synthetic datasets
@@ -60,7 +60,7 @@ zzu-transformations/
 
 ## Implemented Components
 
-### `transformation_algorithms.py`
+### `algorithms.py`
 
 The library is organized into 15 sections. Sections 1–9 cover transformation-based OLS, and Sections 10–15 add the nonlinear baselines and ZZU hybrid.
 
@@ -139,7 +139,7 @@ Fits OLS in a transformed response space, then inverts back to the
 original scale (with optional Duan-style smearing correction):
 
 ```python
-import transformation_algorithms as ta
+import algorithms as ta
 
 m = ta.TransformedOLS(transform="boxcox", use_smearing=True).fit(X, y)
 y_hat = m.predict(X_new)         # original scale, smearing applied
@@ -187,7 +187,7 @@ follow the same conventions as above (`X: (n, p)`, `y: (n,)`,
 
 ```python
 import numpy as np
-import transformation_algorithms as ta
+import algorithms as ta
 
 # 1. Define the nonlinear model f(X, theta)
 model_fn = lambda X, t: t[0] * np.exp(t[1] * X[:, 0])

@@ -6,7 +6,7 @@ Every randomness source in the project flows through
 ``np.random.default_rng(seed)`` — a *local* generator that cannot leak
 through ``np.random.*`` global state.  Default seeds were historically
 scattered across three files (`toy_data.py` generators, `run_comparison.py`
-benchmark loop, `transformation_algorithms.py` ZZU validation split).
+benchmark loop, `algorithms.py` ZZU validation split).
 
 This module centralizes the defaults so a reader of the writeup can audit
 "what random state was used to generate figure X" by looking in one

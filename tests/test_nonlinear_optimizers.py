@@ -1,5 +1,5 @@
 """Tests for the three nonlinear regressors and the numerical Jacobian
-helper (Sections 10-13 of transformation_algorithms.py).
+helper (Sections 10-13 of algorithms.py).
 
 Focuses on:
   - numerical Jacobian agreeing with the analytic Jacobian
@@ -13,7 +13,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-import transformation_algorithms as ta
+import algorithms as ta
 
 
 TRUE_THETA = np.array([2.0, 0.7])      # a, b for y = a·exp(b·x)

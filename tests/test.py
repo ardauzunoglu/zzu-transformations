@@ -1,6 +1,6 @@
 import sys; sys.path.insert(0, '.')
 import numpy as np
-import transformation_algorithms as ta
+import algorithms as ta
 import toy_data as td
 
 # --- Test 1: all three regressors on exponential multiplicative data ---

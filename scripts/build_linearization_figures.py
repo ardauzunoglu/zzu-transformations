@@ -33,7 +33,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 import toy_data as td
-import transformation_algorithms as ta
+import scripts.algorithms as ta
 from reproducibility import reproduce_dir
 
 OUT_DIR = reproduce_dir("comparison_results", PROJECT_ROOT)

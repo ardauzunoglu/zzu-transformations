@@ -34,7 +34,7 @@ import numpy as np
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import transformation_algorithms as ta
+import scripts.algorithms as ta
 import toy_data as td
 # All benchmark seeds and split sizes live in reproducibility.py — a single
 # source of truth that the writeup can cite without grepping for constants.

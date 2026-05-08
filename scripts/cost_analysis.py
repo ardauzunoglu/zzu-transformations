@@ -39,7 +39,7 @@ import pandas as pd
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import transformation_algorithms as ta
+import scripts.algorithms as ta
 
 from run_comparison import (
     DATASET_SPECS,

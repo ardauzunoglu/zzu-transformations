@@ -1,5 +1,5 @@
 """Tests for the response-transformation families and λ selection
-(Sections 3-6 of transformation_algorithms.py).
+(Sections 3-6 of algorithms.py).
 """
 
 from __future__ import annotations
@@ -7,7 +7,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-import transformation_algorithms as ta
+import algorithms as ta
 
 
 # ---------------------------------------------------------------------------

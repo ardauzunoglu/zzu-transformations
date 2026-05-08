@@ -1,5 +1,5 @@
 """Tests for the low-level linear-algebra helpers (Section 2 of
-transformation_algorithms.py): as_2d, add_intercept, ols_fit, ols_predict.
+algorithms.py): as_2d, add_intercept, ols_fit, ols_predict.
 """
 
 from __future__ import annotations
@@ -7,7 +7,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-import transformation_algorithms as ta
+import algorithms as ta
 
 
 class TestAs2D:

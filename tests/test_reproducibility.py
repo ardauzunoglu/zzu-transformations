@@ -25,7 +25,7 @@ import pytest
 
 import reproducibility as repro
 import toy_data as td
-import transformation_algorithms as ta
+import algorithms as ta
 
 
 # ---------------------------------------------------------------------------
