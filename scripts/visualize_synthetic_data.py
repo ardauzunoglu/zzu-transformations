@@ -8,6 +8,16 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
+plt.rcParams.update({
+    "font.size": 14,
+    "axes.titlesize": 18,
+    "axes.labelsize": 16,
+    "xtick.labelsize": 14,
+    "ytick.labelsize": 14,
+    "legend.fontsize": 14,
+    "figure.titlesize": 20,
+})
+
 warnings.filterwarnings(
     "ignore",
     message="FigureCanvasAgg is non-interactive, and thus cannot be shown",

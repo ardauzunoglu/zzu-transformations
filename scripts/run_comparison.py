@@ -33,6 +33,16 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
+plt.rcParams.update({
+    "font.size": 14,
+    "axes.titlesize": 18,
+    "axes.labelsize": 16,
+    "xtick.labelsize": 14,
+    "ytick.labelsize": 14,
+    "legend.fontsize": 14,
+    "figure.titlesize": 20,
+})
+
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import scripts.algorithms as ta
 import toy_data as td

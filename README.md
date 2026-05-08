@@ -5,6 +5,7 @@
 **Authors:** Alvin Zhang · Wynn Zhao · Arda Uzunoglu  
 **Course project, April–May 2026**
 
+Please refer to [WALKTHROUGH.md](WALKTHROUGH.md) for reproducing our results presented in the report.
 ---
 
 ## Overview
