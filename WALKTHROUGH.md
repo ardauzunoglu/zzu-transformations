@@ -37,7 +37,7 @@ This is a quick map of the repo, where we show what each main file or folder is 
 
 ## Notebooks
 
-- [concrete_analysis.ipynb](/Users/ardauzunoglu/zzu-transformations/concrete_analysis.ipynb): Real-world concrete dataset analysis.
+- [concrete_analysis.ipynb](/Users/ardauzunoglu/zzu-transformations/concrete_analysis.ipynb): Real-world concrete dataset analysis. Run to reproduce Figure 4 from the report.
 
 - [bike_analysis.ipynb](/Users/ardauzunoglu/zzu-transformations/bike_analysis.ipynb): Real-world bike-sharing dataset analysis.
 
