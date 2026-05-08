@@ -35,11 +35,12 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import transformation_algorithms as ta
 import toy_data as td
+# All benchmark seeds and split sizes live in reproducibility.py — a single
+# source of truth that the writeup can cite without grepping for constants.
+from reproducibility import N_SEEDS, TEST_FRACTION
 
 
 OUTPUT_DIR = Path("comparison_results")
-N_SEEDS = 10
-TEST_FRACTION = 0.2
 
 # Method-family tagging for plotting.
 LINEAR_FAMILY = "linearized_ols"

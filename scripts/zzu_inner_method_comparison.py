@@ -40,9 +40,8 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 import transformation_algorithms as ta
-from run_comparison import (
-    DATASET_SPECS, N_SEEDS, TEST_FRACTION,
-)
+from run_comparison import DATASET_SPECS
+from reproducibility import N_SEEDS, TEST_FRACTION
 
 OUTPUT_DIR = PROJECT_ROOT / "comparison_results"
 

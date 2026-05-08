@@ -245,3 +245,78 @@ class TestZZUPredictAndSummary:
                   "final_theta", "converged", "theta_init_used",
                   "train_metrics"):
             assert k in s
+
+
+# ---------------------------------------------------------------------------
+# ZZU with non-BFGS inner optimizers
+# ---------------------------------------------------------------------------
+#
+# Why these tests matter
+# ----------------------
+# Every other ZZU test pins nonlinear_method='bfgs' (the project default).
+# But ZZU advertises support for all three optimizers, and the inner-method
+# ablation (zzu_inner_method.png) is one of the headline figures in the
+# writeup.  These tests exercise the gauss_newton and gradient_descent
+# code paths — and the nonlinear_kwargs plumbing that lets users tune
+# them — so a refactor of ZZU's inner-regressor construction can't
+# silently break the ablation.
+
+class TestZZUInnerOptimizers:
+
+    def test_gauss_newton_inner_optimizer_converges(
+            self, exp_mult_data, exp_model_fn, restricted_log_suite):
+        # ZZU + GN must reach essentially the same fit as ZZU + BFGS on
+        # log-linear data.  If the gauss_newton branch were dispatching
+        # to the wrong constructor, the assertion on the inner regressor
+        # type below would fail, and the convergence assertion would
+        # likely fail too.
+        X, y, true_ab = exp_mult_data
+        zzu = ta.ZZUTransformRegressor(
+            model_fn=exp_model_fn,
+            coeff_to_init=_log_coeff_to_init,
+            nonlinear_method="gauss_newton",
+            transformations=restricted_log_suite,
+        ).fit(X, y)
+        assert zzu.fit_error_ in (None, "")
+        assert isinstance(zzu.nonlinear_regressor_, ta.GaussNewtonRegressor)
+        # Land near the truth on the (well-behaved) growth-rate parameter.
+        assert zzu.nonlinear_regressor_.theta_[1] == pytest.approx(true_ab[1], abs=0.05)
+
+    def test_gradient_descent_inner_optimizer_dispatches_correctly(
+            self, exp_mult_data, exp_model_fn, restricted_log_suite):
+        # ZZU + GD: even though pure GD often hits the iteration cap,
+        # the warm start should be enough to beat the trivial mean
+        # baseline.  This test confirms (a) GD is actually selected and
+        # (b) the warm-start RMSE is usefully better than std(y).
+        X, y, _ = exp_mult_data
+        zzu = ta.ZZUTransformRegressor(
+            model_fn=exp_model_fn,
+            coeff_to_init=_log_coeff_to_init,
+            nonlinear_method="gradient_descent",
+            nonlinear_kwargs={"learning_rate": 1e-4,
+                              "decay": 0.9999,
+                              "max_iter": 5000},
+            transformations=restricted_log_suite,
+        ).fit(X, y)
+        assert isinstance(zzu.nonlinear_regressor_, ta.GradientDescentRegressor)
+        rmse = ta.regression_metrics(y, zzu.predict(X))["rmse"]
+        # Beating std(y) means we did better than predicting the mean.
+        assert rmse < float(np.std(y))
+
+    def test_nonlinear_kwargs_forwarded_to_inner_regressor(
+            self, exp_mult_data, exp_model_fn, restricted_log_suite):
+        # Why: nonlinear_kwargs is the only way users can tune the
+        # inner optimizer.  If the dict were silently dropped, defaults
+        # like max_iter or learning_rate would be impossible to override
+        # for ZZU runs — and the cost-analysis ablation could not have
+        # given GD its 5000-iter budget.  We pin a tiny budget and check
+        # that n_iter_ respects it.
+        X, y, _ = exp_mult_data
+        zzu = ta.ZZUTransformRegressor(
+            model_fn=exp_model_fn,
+            coeff_to_init=_log_coeff_to_init,
+            nonlinear_method="bfgs",
+            nonlinear_kwargs={"max_iter": 3},   # deliberately too small
+            transformations=restricted_log_suite,
+        ).fit(X, y)
+        assert zzu.nonlinear_regressor_.n_iter_ <= 3

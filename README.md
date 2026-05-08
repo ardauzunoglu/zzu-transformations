@@ -238,6 +238,46 @@ Dependencies: `numpy`, `pandas`, `matplotlib` (no scipy).
 
 ---
 
+## Reproducibility
+
+All randomness in the codebase flows through `np.random.default_rng(seed)`
+— a *local* generator that does not touch global state. Every default
+seed is registered in [`reproducibility.py`](reproducibility.py) so
+"what random state produced figure X" is answerable in one place rather
+than three:
+
+| Constant | Value | Used by |
+|----------|------:|---------|
+| `N_SEEDS` | 10 | `run_comparison.py`, `cost_analysis.py`, `zzu_inner_method_comparison.py` (loop seeds 0..9) |
+| `TEST_FRACTION` | 0.2 | every benchmark train/test split |
+| `DEFAULT_SEED` | 123 | `train_test_split_arrays` default |
+| `ZZU_VALIDATION_SEED` | 0 | `ZZUTransformRegressor` internal screen split |
+| `DATASET_SEEDS` | 101–105 | `make_exponential_multiplicative`, …, `make_multivariable_nonlinear` |
+
+Two consequences of this design:
+
+- **Bit-identical reproduction.** Running any benchmark script twice
+  with the same seed produces byte-equal CSVs. Verified by
+  `tests/test_reproducibility.py`, which exercises every layer of the
+  pipeline (dataset generation → split → TransformedOLS / Box-Cox λ
+  selection → ZZU end-to-end).
+- **No hidden global state.** Project code never calls
+  `np.random.seed(...)` or the stdlib `random` module. The
+  `seed_everything()` helper in `reproducibility.py` exists *only* as a
+  defensive escape hatch for notebooks or third-party libraries that
+  may rely on global PRNGs.
+
+To pin down a specific run: pass `seed=` explicitly anywhere it's
+accepted, or import the constants:
+
+```python
+from reproducibility import N_SEEDS, TEST_FRACTION, make_rng
+
+rng = make_rng(seed=42)              # fresh local generator
+```
+
+---
+
 ## Benchmark Results
 
 Top method per dataset, mean test RMSE over 10 random 80/20 splits:

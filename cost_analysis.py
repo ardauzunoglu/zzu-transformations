@@ -45,12 +45,13 @@ from run_comparison import (
     LINEAR_FAMILY,
     NONLINEAR_FAMILY,
     OUTPUT_DIR,
-    N_SEEDS,
-    TEST_FRACTION,
     ZZU_FAMILY,
     make_transformed_suite,
     make_zzu,
 )
+# Pull seeds and split size from the central registry so all benchmarks
+# stay synchronized when the project bumps N_SEEDS or TEST_FRACTION.
+from reproducibility import N_SEEDS, TEST_FRACTION
 
 
 # ---------------------------------------------------------------------------
