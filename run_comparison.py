@@ -79,12 +79,26 @@ def _pretty_method_name(name: str) -> str:
     return pretty.replace(" + Smear", "\n+ Smear")
 
 
-def _selected_dataset_names() -> List[str]:
-    selected = list(DATASET_SPECS.keys()) if DATASETS_TO_COMPARE is None else DATASETS_TO_COMPARE
+def resolve_datasets(
+    datasets_to_compare: Optional[List[str]] = None,
+) -> List[str]:
+    """Validate a `DATASETS_TO_COMPARE`-style list against `DATASET_SPECS`.
+
+    Used by every benchmark script so the validation rule lives in one
+    place: ``None`` means "all datasets"; otherwise the given names must
+    all exist in ``DATASET_SPECS``.
+    """
+    if datasets_to_compare is None:
+        datasets_to_compare = DATASETS_TO_COMPARE
+    selected = list(DATASET_SPECS.keys()) if datasets_to_compare is None else list(datasets_to_compare)
     invalid = [name for name in selected if name not in DATASET_SPECS]
     if invalid:
-        raise ValueError(f"Unknown dataset(s) in DATASETS_TO_COMPARE: {invalid}")
+        raise ValueError(f"Unknown dataset(s) requested: {invalid}")
     return selected
+
+
+# Back-compat: callers that were importing the old name continue to work.
+_selected_dataset_names = resolve_datasets
 
 
 # ---------------------------------------------------------------------------
@@ -261,8 +275,21 @@ def make_nonlinear_regressors(model_fn: Callable) -> Dict[str, Any]:
     }
 
 
-def make_zzu(spec: Dict[str, Any], X_train: np.ndarray, y_train: np.ndarray) -> ta.ZZUTransformRegressor:
-    """Build a ZZU regressor using the spec; bake heuristic init into fallback."""
+def make_zzu(
+    spec: Dict[str, Any],
+    X_train: np.ndarray,
+    y_train: np.ndarray,
+    *,
+    nonlinear_method: str = "bfgs",
+    nonlinear_kwargs: Optional[Dict[str, Any]] = None,
+) -> ta.ZZUTransformRegressor:
+    """Build a ZZU regressor from a dataset spec.  The heuristic init is
+    baked into ``fallback_theta_init`` so the screen never crashes the
+    pipeline when ``coeff_to_init`` cannot be applied.
+
+    ``nonlinear_method`` and ``nonlinear_kwargs`` are forwarded to
+    ``ZZUTransformRegressor`` so callers can sweep over the inner
+    optimizer (used by ``zzu_inner_method_comparison.py``)."""
     heuristic_init = spec["theta_init_fn"](X_train, y_train)
     coeff_to_init = spec["zzu_coeff_to_init"]
     if coeff_to_init is None:
@@ -271,7 +298,8 @@ def make_zzu(spec: Dict[str, Any], X_train: np.ndarray, y_train: np.ndarray) -> 
     return ta.ZZUTransformRegressor(
         model_fn=spec["model_fn"],
         coeff_to_init=coeff_to_init,
-        nonlinear_method="bfgs",
+        nonlinear_method=nonlinear_method,
+        nonlinear_kwargs=dict(nonlinear_kwargs) if nonlinear_kwargs else None,
         transformations=spec["zzu_transformations"],
         fallback_theta_init=heuristic_init,
     )

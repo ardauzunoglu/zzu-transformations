@@ -51,8 +51,10 @@ from run_comparison import (
     ZZU_FAMILY,
     _pretty_dataset_name,
     _pretty_method_name,
+    _safe_predict,
     make_transformed_suite,
     make_zzu,
+    resolve_datasets,
 )
 # Pull seeds and split size from the central registry so all benchmarks
 # stay synchronized when the project bumps N_SEEDS or TEST_FRACTION.
@@ -87,13 +89,6 @@ def _time(fn: Callable) -> float:
     return time.perf_counter() - t0
 
 
-def _safe_predict(predict_fn: Callable, X_test: np.ndarray) -> Optional[np.ndarray]:
-    try:
-        return np.asarray(predict_fn(X_test), dtype=float).ravel()
-    except Exception:
-        return None
-
-
 def _rmse(y_true: np.ndarray, pred: Optional[np.ndarray]) -> float:
     if pred is None or not np.all(np.isfinite(pred)):
         return float("nan")
@@ -113,14 +108,6 @@ def _pretty_cost_method_name(name: str) -> str:
     for old, new in replacements.items():
         pretty = pretty.replace(old, new)
     return pretty
-
-
-def _selected_dataset_names() -> List[str]:
-    selected = list(DATASET_SPECS.keys()) if DATASETS_TO_COMPARE is None else DATASETS_TO_COMPARE
-    invalid = [name for name in selected if name not in DATASET_SPECS]
-    if invalid:
-        raise ValueError(f"Unknown dataset(s) in DATASETS_TO_COMPARE: {invalid}")
-    return selected
 
 
 def cost_row(
@@ -465,7 +452,7 @@ def plot_warm_vs_cold(raw: pd.DataFrame, out_path: Path) -> None:
 
 def main() -> None:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    selected_datasets = _selected_dataset_names()
+    selected_datasets = resolve_datasets(DATASETS_TO_COMPARE)
 
     rows: List[Dict[str, Any]] = []
     for dataset in selected_datasets:

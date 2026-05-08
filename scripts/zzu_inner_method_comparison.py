@@ -28,7 +28,7 @@ import sys
 import time
 import warnings
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 import matplotlib
 matplotlib.use("Agg")
@@ -40,7 +40,12 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 import transformation_algorithms as ta
-from run_comparison import DATASET_SPECS
+from run_comparison import (
+    DATASET_SPECS,
+    _pretty_dataset_name,
+    make_zzu,
+    resolve_datasets,
+)
 from reproducibility import N_SEEDS, TEST_FRACTION
 
 OUTPUT_DIR = PROJECT_ROOT / "comparison_results"
@@ -75,186 +80,169 @@ HATCH_BY_VARIANT = {"pure": "//", "zzu": ""}
 ALPHA_BY_VARIANT = {"pure": 0.55, "zzu": 1.0}
 
 
-def _pretty_dataset_name(name: str) -> str:
-    return name.replace("_", " ").title()
-
-
 # ---------------------------------------------------------------------------
 # Per-(dataset, method, seed) evaluation
 # ---------------------------------------------------------------------------
 
-def _build_zzu(spec, X_tr, y_tr, method, kwargs):
-    heuristic_init = spec["theta_init_fn"](X_tr, y_tr)
-    coeff_to_init = spec["zzu_coeff_to_init"]
-    if coeff_to_init is None:
-        coeff_to_init = lambda _m, _h=heuristic_init: _h
-    return ta.ZZUTransformRegressor(
-        model_fn=spec["model_fn"],
-        coeff_to_init=coeff_to_init,
-        nonlinear_method=method,
-        nonlinear_kwargs=dict(kwargs),
-        transformations=spec["zzu_transformations"],
-        fallback_theta_init=heuristic_init,
-    )
-
-
-def _build_pure(spec, method, kwargs):
-    """Standalone nonlinear regressor with the dataset's heuristic init."""
-    if method == "gradient_descent":
-        return ta.GradientDescentRegressor(model_fn=spec["model_fn"], **kwargs)
-    if method == "gauss_newton":
-        return ta.GaussNewtonRegressor(model_fn=spec["model_fn"], **kwargs)
-    if method == "bfgs":
-        return ta.BFGSRegressor(model_fn=spec["model_fn"], **kwargs)
-    raise ValueError(method)
+_PURE_REGRESSORS = {
+    "gradient_descent": ta.GradientDescentRegressor,
+    "gauss_newton":     ta.GaussNewtonRegressor,
+    "bfgs":             ta.BFGSRegressor,
+}
 
 
 def _common_split(spec, seed):
     bundle = spec["generator"]()
-    X_full = bundle.X.values
-    y_full = bundle.y.values
     return ta.train_test_split_arrays(
-        X_full, y_full, test_size=TEST_FRACTION, seed=seed
+        bundle.X.values, bundle.y.values,
+        test_size=TEST_FRACTION, seed=seed,
     )
+
+
+def _time_fit_and_rmse(reg, X_tr, y_tr, X_te, y_te, theta_init=None):
+    """Fit `reg`, predict on (X_te, y_te), and return (fit_time, rmse).
+
+    Wraps the timer + RuntimeWarning filter + safe-predict pattern shared
+    by both the pure and ZZU evaluators.  ``theta_init`` is forwarded to
+    standalone regressors (whose ``fit`` takes it) and omitted for ZZU."""
+    t0 = time.perf_counter()
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        if theta_init is None:
+            reg.fit(X_tr, y_tr)
+        else:
+            reg.fit(X_tr, y_tr, theta_init)
+        try:
+            pred = reg.predict(X_te)
+            rmse = float(ta.regression_metrics(y_te, pred)["rmse"])
+        except Exception:
+            rmse = float("nan")
+    return time.perf_counter() - t0, rmse
+
+
+def _row(dataset, method, variant, seed, *, fit_time, rmse, inner, fit_error):
+    return {
+        "dataset": dataset,
+        "method": method,
+        "variant": variant,
+        "seed": seed,
+        "fit_time_sec": fit_time,
+        "n_iter": getattr(inner, "n_iter_", None),
+        "converged": getattr(inner, "converged_", None),
+        "rmse": rmse,
+        "fit_error": fit_error or "",
+    }
 
 
 def evaluate_zzu(dataset, spec, method, kwargs, seed):
     """ZZU + this inner optimizer.  Times the entire screen+warm-start fit."""
-    X_train, X_test, y_train, y_test = _common_split(spec, seed)
-    zzu = _build_zzu(spec, X_train, y_train, method, kwargs)
-
-    t0 = time.perf_counter()
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", RuntimeWarning)
-        zzu.fit(X_train, y_train)
-        try:
-            pred = zzu.predict(X_test)
-            rmse = float(ta.regression_metrics(y_test, pred)["rmse"])
-        except Exception:
-            rmse = float("nan")
-    fit_time = time.perf_counter() - t0
-
-    nonlin = zzu.nonlinear_regressor_
-    return {
-        "dataset": dataset,
-        "method": method,
-        "variant": "zzu",
-        "seed": seed,
-        "fit_time_sec": fit_time,
-        "n_iter": getattr(nonlin, "n_iter_", None),
-        "converged": getattr(nonlin, "converged_", None),
-        "rmse": rmse,
-        "fit_error": zzu.fit_error_ or "",
-    }
+    X_tr, X_te, y_tr, y_te = _common_split(spec, seed)
+    zzu = make_zzu(spec, X_tr, y_tr,
+                   nonlinear_method=method, nonlinear_kwargs=kwargs)
+    fit_time, rmse = _time_fit_and_rmse(zzu, X_tr, y_tr, X_te, y_te)
+    return _row(dataset, method, "zzu", seed,
+                fit_time=fit_time, rmse=rmse,
+                inner=zzu.nonlinear_regressor_, fit_error=zzu.fit_error_)
 
 
 def evaluate_pure(dataset, spec, method, kwargs, seed):
     """Standalone optimizer with the cold heuristic init."""
     X_tr, X_te, y_tr, y_te = _common_split(spec, seed)
     theta_init = spec["theta_init_fn"](X_tr, y_tr)
-    reg = _build_pure(spec, method, kwargs)
-
-    t0 = time.perf_counter()
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", RuntimeWarning)
-        reg.fit(X_tr, y_tr, theta_init)
-        try:
-            pred = reg.predict(X_te)
-            rmse = float(ta.regression_metrics(y_te, pred)["rmse"])
-        except Exception:
-            rmse = float("nan")
-    fit_time = time.perf_counter() - t0
-
-    return {
-        "dataset": dataset,
-        "method": method,
-        "variant": "pure",
-        "seed": seed,
-        "fit_time_sec": fit_time,
-        "n_iter": getattr(reg, "n_iter_", None),
-        "converged": getattr(reg, "converged_", None),
-        "rmse": rmse,
-        "fit_error": reg.fit_error_ or "",
-    }
+    reg = _PURE_REGRESSORS[method](model_fn=spec["model_fn"], **kwargs)
+    fit_time, rmse = _time_fit_and_rmse(reg, X_tr, y_tr, X_te, y_te,
+                                        theta_init=theta_init)
+    return _row(dataset, method, "pure", seed,
+                fit_time=fit_time, rmse=rmse,
+                inner=reg, fit_error=reg.fit_error_)
 
 
 # ---------------------------------------------------------------------------
 # Plot
 # ---------------------------------------------------------------------------
 
-def plot_comparison(summary: pd.DataFrame, out_path: Path) -> None:
-    datasets = list(summary["dataset"].drop_duplicates())
-    dataset_labels = [_pretty_dataset_name(dataset) for dataset in datasets]
-    methods = list(METHODS.keys())
-    variants = ["pure", "zzu"]
+def _bar_offsets(n_methods: int, n_variants: int,
+                 bar_w: float, pair_gap: float) -> list[float]:
+    """Center-aligned bar offsets for n_methods × n_variants bars per group."""
+    base = -(2 * bar_w + pair_gap) - 0.5 * bar_w
+    return [
+        base + mi * (2 * bar_w + pair_gap) + vi * bar_w + 0.5 * bar_w
+        for mi in range(n_methods)
+        for vi in range(n_variants)
+    ]
 
-    # Layout: per dataset, 3 method-pairs (GD, GN, BFGS) × 2 bars (pure, zzu)
-    # = 6 bars per group, with a small gap between method-pairs.
-    bar_w = 0.13
-    pair_gap = 0.04
-    # Offsets (signed) for each (method_idx, variant_idx).
-    offsets = []
-    base = -(2 * bar_w + pair_gap) - 0.5 * bar_w  # leftmost edge of group
-    for mi in range(len(methods)):
-        for vi in range(len(variants)):
-            offsets.append(
-                base + mi * (2 * bar_w + pair_gap) + vi * bar_w + 0.5 * bar_w
-            )
-    x = np.arange(len(datasets))
 
+def _draw_paired_bars(
+    ax,
+    summary: pd.DataFrame,
+    datasets: list,
+    methods: list,
+    variants: list,
+    offsets: list,
+    bar_w: float,
+    *,
+    value_col: str,
+    std_col: Optional[str],
+    ylabel: str,
+) -> None:
+    """Draw one panel of paired (pure vs ZZU) bars per dataset.
+
+    Shared by the RMSE and fit-time panels — only the value column,
+    optional error bars, and y-axis label differ.
+    """
     def lookup(d, m, v, col):
         row = summary[(summary["dataset"] == d)
                       & (summary["method"] == m)
                       & (summary["variant"] == v)]
         return float(row[col].iloc[0]) if not row.empty else float("nan")
 
-    fig, axes = plt.subplots(2, 1, figsize=(15, 8.6),
-                             constrained_layout=True)
-
-    # --- RMSE ---
-    ax = axes[0]
+    x = np.arange(len(datasets))
     k = 0
     for method in methods:
         for variant in variants:
-            means = [lookup(d, method, variant, "mean_rmse") for d in datasets]
-            stds  = [lookup(d, method, variant, "std_rmse") for d in datasets]
+            means = [lookup(d, method, variant, value_col) for d in datasets]
+            stds = ([lookup(d, method, variant, std_col) for d in datasets]
+                    if std_col is not None else None)
             label = (f"Pure {SHORT_LABEL[method]}" if variant == "pure"
                      else f"ZZU + {SHORT_LABEL[method]}")
-            ax.bar(x + offsets[k], means, bar_w,
-                   yerr=stds, capsize=2,
-                   color=COLOR[method], alpha=ALPHA_BY_VARIANT[variant],
-                   hatch=HATCH_BY_VARIANT[variant],
-                   edgecolor="black", linewidth=0.7,
-                   label=label)
+            ax.bar(
+                x + offsets[k], means, bar_w,
+                yerr=stds, capsize=2 if stds is not None else 0,
+                color=COLOR[method], alpha=ALPHA_BY_VARIANT[variant],
+                hatch=HATCH_BY_VARIANT[variant],
+                edgecolor="black", linewidth=0.7,
+                label=label,
+            )
             k += 1
     ax.set_xticks(x)
-    ax.set_xticklabels(dataset_labels, rotation=0, ha="center", fontsize=10)
-    ax.set_ylabel("RMSE")
+    ax.set_xticklabels(
+        [_pretty_dataset_name(d) for d in datasets],
+        rotation=0, ha="center", fontsize=10,
+    )
+    ax.set_ylabel(ylabel)
     ax.set_yscale("log")
     ax.grid(axis="y", alpha=0.3, which="both")
     ax.legend(ncol=3, fontsize=9, loc="upper left")
 
-    # --- Fit time ---
-    ax = axes[1]
-    k = 0
-    for method in methods:
-        for variant in variants:
-            means = [lookup(d, method, variant, "mean_fit_time") for d in datasets]
-            label = (f"Pure {SHORT_LABEL[method]}" if variant == "pure"
-                     else f"ZZU + {SHORT_LABEL[method]}")
-            ax.bar(x + offsets[k], means, bar_w,
-                   color=COLOR[method], alpha=ALPHA_BY_VARIANT[variant],
-                   hatch=HATCH_BY_VARIANT[variant],
-                   edgecolor="black", linewidth=0.7,
-                   label=label)
-            k += 1
-    ax.set_xticks(x)
-    ax.set_xticklabels(dataset_labels, rotation=0, ha="center", fontsize=10)
-    ax.set_ylabel("Fit Time (s)")
-    ax.set_yscale("log")
-    ax.grid(axis="y", alpha=0.3, which="both")
-    ax.legend(ncol=3, fontsize=9, loc="upper left")
 
+def plot_comparison(summary: pd.DataFrame, out_path: Path) -> None:
+    datasets = list(summary["dataset"].drop_duplicates())
+    methods = list(METHODS.keys())
+    variants = ["pure", "zzu"]
+
+    bar_w = 0.13
+    pair_gap = 0.04
+    offsets = _bar_offsets(len(methods), len(variants), bar_w, pair_gap)
+
+    fig, axes = plt.subplots(2, 1, figsize=(15, 8.6), constrained_layout=True)
+    _draw_paired_bars(
+        axes[0], summary, datasets, methods, variants, offsets, bar_w,
+        value_col="mean_rmse", std_col="std_rmse", ylabel="RMSE",
+    )
+    _draw_paired_bars(
+        axes[1], summary, datasets, methods, variants, offsets, bar_w,
+        value_col="mean_fit_time", std_col=None, ylabel="Fit Time (s)",
+    )
     fig.savefig(out_path, dpi=140)
     plt.close(fig)
 
@@ -265,12 +253,7 @@ def plot_comparison(summary: pd.DataFrame, out_path: Path) -> None:
 
 def main():
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    selected_datasets = (
-        list(DATASET_SPECS.keys()) if DATASETS_TO_COMPARE is None else DATASETS_TO_COMPARE
-    )
-    invalid = [name for name in selected_datasets if name not in DATASET_SPECS]
-    if invalid:
-        raise ValueError(f"Unknown dataset(s) in DATASETS_TO_COMPARE: {invalid}")
+    selected_datasets = resolve_datasets(DATASETS_TO_COMPARE)
 
     rows = []
     for dataset in selected_datasets:

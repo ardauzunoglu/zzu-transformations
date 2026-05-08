@@ -1,52 +1,44 @@
-#!/usr/bin/env python
-# coding: utf-8
+"""Transformation algorithms for the ZZU regression experiments.
 
-# # Transformation Algorithms for ZZU Regression Experiments
-# 
-# This notebook implements the transformation-based regression algorithms discussed in the related work:
-# 
-# - Classical relationship-specific transforms: identity, logarithmic, reciprocal, and power-scale transforms;
-# - Box-Cox transformations for strictly positive responses;
-# - Yeo-Johnson transformations for responses that may include zero or negative values;
-# - Maximum-likelihood selection of transformation parameter $\lambda$;
-# - Ordinary least squares on the transformed scale;
-# - Inverse prediction on the original scale;
-# - Duan-style smearing correction for retransformation bias;
-# - Residual and prediction diagnostics for transformation screening.
+This module implements:
 
-# ## 1. Setup
-# 
-# The implementation below intentionally uses a small dependency set: `numpy`, `pandas`, and `matplotlib`.
-# 
-# The central design choice is that every transformation has a **forward map**, an **inverse map**, and, where needed, a **log-Jacobian correction** used for likelihood-based parameter selection.
+  - Identity, log, reciprocal, and power response transformations.
+  - Box-Cox (positive responses) and Yeo-Johnson (any real response).
+  - Profile-likelihood λ selection for both Box-Cox and Yeo-Johnson.
+  - OLS on the transformed scale (`TransformedOLS`) with optional Duan-style
+    smearing correction for retransformation bias.
+  - Three pure-NumPy nonlinear regressors: gradient descent,
+    Gauss-Newton (with self-activating LM damping), and BFGS.
+  - The ZZU hybrid workflow (`ZZUTransformRegressor`): screen → warm-start →
+    bias-correct.
+  - Original-scale metric and residual diagnostics, plus batch evaluators
+    that record errors instead of crashing on a bad model.
 
-# In[1]:
+Every transformation exposes a forward map, an inverse map, and (where
+needed) a log-Jacobian term used by the likelihood-based λ selection.
 
+Importing this module is side-effect-free: no global numpy or matplotlib
+state is mutated.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Any, Callable, Dict, Optional, Tuple
 
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
 
-from dataclasses import dataclass, field
-from typing import Callable, Optional, Dict, Tuple, Any
-
-np.set_printoptions(precision=4, suppress=True)
-
-# Global numerical tolerance used throughout the notebook.
+# Numerical tolerance used to guard divisions, near-zero comparisons, and
+# fall-back branches throughout this module.
 EPS = 1e-12
 
 
-# ## 2. Linear algebra helpers
-# 
-# For a response transformation $z = T(y)$, the transformed regression model is
-# 
-# $$
-# z_i = \beta_0 + x_i^\top \beta + \varepsilon_i.
-# $$
-# 
-# We fit this transformed model using ordinary least squares.
-
-# In[2]:
+# ---------------------------------------------------------------------------
+# Linear algebra helpers
+#
+# OLS for the transformed regression model  z = beta_0 + X @ beta + epsilon.
+# ---------------------------------------------------------------------------
 
 
 def as_2d(X: np.ndarray) -> np.ndarray:
@@ -114,51 +106,15 @@ def ols_predict(X: np.ndarray, beta: np.ndarray) -> np.ndarray:
     return add_intercept(X) @ np.asarray(beta, dtype=float)
 
 
-# ## 3. Basic transformation families
-# 
-# ### Identity
-# 
-# $$
-# T(y) = y, \qquad T^{-1}(z) = z.
-# $$
-# 
-# ### Logarithmic
-# 
-# $$
-# T(y) = \log y, \qquad T^{-1}(z) = e^z.
-# $$
-# 
-# This is appropriate only for positive responses.
-# 
-# ### Reciprocal
-# 
-# $$
-# T(y) = \frac{1}{y}, \qquad T^{-1}(z) = \frac{1}{z}.
-# $$
-# 
-# This is fragile near zero, so the implementation checks for unsafe values.
-# 
-# ### Power-scale
-# 
-# For a fixed power $p$,
-# 
-# $$
-# T_p(y) =
-# \begin{cases}
-# \log y, & p = 0, \\
-# y^p, & p \ne 0,
-# \end{cases}
-# \qquad
-# T_p^{-1}(z) =
-# \begin{cases}
-# e^z, & p = 0, \\
-# z^{1/p}, & p \ne 0.
-# \end{cases}
-# $$
-# 
-# This implementation uses the positive-response version of the power transform.
-
-# In[3]:
+# ---------------------------------------------------------------------------
+# Basic transformation families
+#
+# Each family provides forward and inverse maps:
+#   identity   :  T(y) = y,    T^-1(z) = z
+#   log        :  T(y) = ln y, T^-1(z) = e^z         (requires y > 0)
+#   reciprocal :  T(y) = 1/y,  T^-1(z) = 1/z         (unsafe near y = 0)
+#   power      :  T_p(y) = y^p (or ln y if p = 0)    (requires y > 0)
+# ---------------------------------------------------------------------------
 
 
 def identity_forward(y: np.ndarray, param: Optional[float] = None) -> np.ndarray:
@@ -230,41 +186,16 @@ def power_inverse(z: np.ndarray, power: float) -> np.ndarray:
     return out
 
 
-# ## 4. Box-Cox transformation
-# 
-# The Box-Cox family is defined for strictly positive responses:
-# 
-# $$
-# T_\lambda(y) =
-# \begin{cases}
-# \dfrac{y^\lambda - 1}{\lambda}, & \lambda \ne 0, \\
-# \log y, & \lambda = 0.
-# \end{cases}
-# $$
-# 
-# The inverse transformation is
-# 
-# $$
-# T_\lambda^{-1}(z) =
-# \begin{cases}
-# (\lambda z + 1)^{1/\lambda}, & \lambda \ne 0, \\
-# e^z, & \lambda = 0.
-# \end{cases}
-# $$
-# 
-# For transformed OLS, a common profile log-likelihood objective is
-# 
-# $$
-# \ell(\lambda)
-# =
-# -\frac{n}{2}\log\left(\frac{\operatorname{SSE}_\lambda}{n}\right)
-# +
-# (\lambda - 1)\sum_{i=1}^n \log y_i,
-# $$
-# 
-# where $\operatorname{SSE}_\lambda$ is the residual sum of squares after fitting OLS to $T_\lambda(y)$.
-
-# In[4]:
+# ---------------------------------------------------------------------------
+# Box-Cox transformation  (requires y > 0)
+#
+#   T_lam(y) = (y^lam - 1) / lam     if lam != 0,    else  log(y)
+#   T_lam^-1(z) = (lam z + 1)^(1/lam) if lam != 0,   else  exp(z)
+#
+# λ is selected by maximizing the profile log-likelihood
+#   l(lam) = -n/2 * log(SSE_lam / n) + (lam - 1) * sum(log y_i),
+# where SSE_lam is the residual sum of squares of OLS on T_lam(y).
+# ---------------------------------------------------------------------------
 
 
 def boxcox_forward(y: np.ndarray, lam: float) -> np.ndarray:
@@ -307,31 +238,19 @@ def boxcox_log_jacobian(y: np.ndarray, lam: float) -> float:
     return float((lam - 1.0) * np.sum(np.log(y)))
 
 
-# ## 5. Yeo-Johnson transformation
-# 
-# The Yeo-Johnson family extends power transformations to all real responses:
-# 
-# $$
-# T_\lambda(y)=
-# \begin{cases}
-# \dfrac{(y+1)^\lambda - 1}{\lambda}, & y \ge 0,\ \lambda \ne 0,\\
-# \log(y+1), & y \ge 0,\ \lambda = 0,\\
-# -\dfrac{(1-y)^{2-\lambda} - 1}{2-\lambda}, & y < 0,\ \lambda \ne 2,\\
-# -\log(1-y), & y < 0,\ \lambda = 2.
-# \end{cases}
-# $$
-# 
-# Its log-Jacobian contribution is
-# 
-# $$
-# \log |J_\lambda(y_i)| =
-# \begin{cases}
-# (\lambda - 1)\log(1+y_i), & y_i \ge 0,\\
-# (1-\lambda)\log(1-y_i), & y_i < 0.
-# \end{cases}
-# $$
-
-# In[5]:
+# ---------------------------------------------------------------------------
+# Yeo-Johnson transformation  (handles any real y, including y <= 0)
+#
+# Piecewise in y and lam:
+#   y >= 0, lam != 0  :  ((y+1)^lam - 1) / lam
+#   y >= 0, lam == 0  :  log(y + 1)
+#   y <  0, lam != 2  :  -((1-y)^(2-lam) - 1) / (2 - lam)
+#   y <  0, lam == 2  :  -log(1 - y)
+#
+# Log-Jacobian contribution per observation:
+#   y_i >= 0  :  (lam - 1) * log(1 + y_i)
+#   y_i <  0  :  (1 - lam) * log(1 - y_i)
+# ---------------------------------------------------------------------------
 
 
 def yeojohnson_forward(y: np.ndarray, lam: float) -> np.ndarray:
@@ -407,13 +326,13 @@ def yeojohnson_log_jacobian(y: np.ndarray, lam: float) -> float:
     return float(np.sum(out))
 
 
-# ## 6. Profile likelihood for selecting $\lambda$
-# 
-# For Box-Cox and Yeo-Johnson, this notebook chooses $\lambda$ by maximizing the transformed-regression profile log-likelihood over a grid.
-# 
-# This grid-search strategy is slower than continuous optimization but transparent, robust, and easy to audit.
-
-# In[7]:
+# ---------------------------------------------------------------------------
+# Profile-likelihood λ selection for Box-Cox / Yeo-Johnson
+#
+# A grid search is used (slower than continuous optimization but transparent,
+# robust, and easy to audit).  Per-grid-point exceptions are caught and
+# recorded as -inf scores so a single bad λ doesn't abort the whole search.
+# ---------------------------------------------------------------------------
 
 
 def transformation_profile_loglik(
@@ -489,49 +408,20 @@ def choose_lambda_by_profile_likelihood(
     return best_lambda, table
 
 
-# ## 7. Duan-style smearing correction
-# 
-# A transformed-scale model predicts
-# 
-# $$
-# \widehat{z}(x) = \widehat{\beta}_0 + x^\top \widehat{\beta}.
-# $$
-# 
-# A naive inverse prediction is
-# 
-# $$
-# \widehat{y}_{\text{naive}}(x) = T^{-1}(\widehat{z}(x)).
-# $$
-# 
-# However, because nonlinear inverse transformations do not generally commute with expectation,
-# 
-# $$
-# T^{-1}\left(E[T(Y)\mid X=x]\right)
-# \ne
-# E[Y\mid X=x].
-# $$
-# 
-# A generalized smearing correction estimates the original-scale conditional mean by averaging over transformed-scale residuals:
-# 
-# $$
-# \widehat{y}_{\text{smear}}(x)
-# =
-# \frac{1}{n}
-# \sum_{i=1}^n
-# T^{-1}\left(\widehat{z}(x) + \widehat{\varepsilon}_i\right).
-# $$
-# 
-# For the log transform, this reduces to the familiar multiplicative correction
-# 
-# $$
-# \widehat{y}_{\text{smear}}(x)
-# =
-# e^{\widehat{z}(x)}
-# \cdot
-# \frac{1}{n}\sum_{i=1}^n e^{\widehat{\varepsilon}_i}.
-# $$
-
-# In[8]:
+# ---------------------------------------------------------------------------
+# Duan-style smearing correction
+#
+# A nonlinear inverse transform does not generally commute with expectation:
+#   T^-1(E[T(Y) | X=x])  !=  E[Y | X=x].
+#
+# The generalized smearing estimator averages the inverse-transformed
+# prediction over the empirical residual distribution:
+#
+#   y_smear(x) = (1/n) * sum_i  T^-1( zhat(x) + residual_i ).
+#
+# For the log transform this reduces to the familiar multiplicative
+# correction  exp(zhat) * mean( exp(residuals) ).
+# ---------------------------------------------------------------------------
 
 
 def generalized_smearing_predict(
@@ -563,26 +453,29 @@ def generalized_smearing_predict(
     return smeared
 
 
-# ## 8. Unified transformed OLS model
-# 
-# The `TransformedOLS` class provides a consistent interface:
-# 
-# ```python
-# model = TransformedOLS(transform="boxcox", use_smearing=True)
-# model.fit(X_train, y_train)
-# y_pred = model.predict(X_test)
-# ```
-# 
-# Supported transformations:
-# 
-# - `"identity"`
-# - `"log"`
-# - `"reciprocal"`
-# - `"power"` with `param=<power>`
-# - `"boxcox"` with fixed or automatically selected `lambda_`
-# - `"yeojohnson"` with fixed or automatically selected `lambda_`
+# ---------------------------------------------------------------------------
+# TransformedOLS — unified fit/predict interface for every transform family
+#
+# Usage:
+#   m = TransformedOLS(transform="boxcox", use_smearing=True).fit(X, y)
+#   y_hat = m.predict(X_new)        # original scale, smearing applied
+#
+# `transform` is one of: "identity", "log", "reciprocal", "power"
+# (requires param=p), "boxcox", "yeojohnson".  For Box-Cox and Yeo-Johnson
+# λ is auto-selected by profile likelihood unless `lambda_=` is supplied.
+# ---------------------------------------------------------------------------
 
-# In[9]:
+# Single source of truth for the (forward, inverse) pair belonging to each
+# transform family.  All wrappers accept `(arg, param)` so we can dispatch
+# uniformly — `param` is ignored by identity / log / reciprocal.
+_TRANSFORM_DISPATCH: Dict[str, Tuple[Callable, Callable]] = {
+    "identity":   (identity_forward,   identity_inverse),
+    "log":        (log_forward,        log_inverse),
+    "reciprocal": (reciprocal_forward, reciprocal_inverse),
+    "power":      (power_forward,      power_inverse),
+    "boxcox":     (boxcox_forward,     boxcox_inverse),
+    "yeojohnson": (yeojohnson_forward, yeojohnson_inverse),
+}
 
 
 @dataclass
@@ -640,48 +533,20 @@ class TransformedOLS:
         return np.nan
 
     def _forward(self, y: np.ndarray) -> np.ndarray:
-        """
-        Apply the model's response transformation.
-        """
-        t = self.transform
-        p = self.selected_param_
-
-        if t == "identity":
-            return identity_forward(y)
-        if t == "log":
-            return log_forward(y)
-        if t == "reciprocal":
-            return reciprocal_forward(y)
-        if t == "power":
-            return power_forward(y, p)
-        if t == "boxcox":
-            return boxcox_forward(y, p)
-        if t == "yeojohnson":
-            return yeojohnson_forward(y, p)
-
-        raise ValueError(f"Unknown transform: {t!r}")
+        """Apply the model's response transformation."""
+        try:
+            fwd, _ = _TRANSFORM_DISPATCH[self.transform]
+        except KeyError:
+            raise ValueError(f"Unknown transform: {self.transform!r}")
+        return fwd(y, self.selected_param_)
 
     def _inverse(self, z: np.ndarray) -> np.ndarray:
-        """
-        Apply the inverse of the model's response transformation.
-        """
-        t = self.transform
-        p = self.selected_param_
-
-        if t == "identity":
-            return identity_inverse(z)
-        if t == "log":
-            return log_inverse(z)
-        if t == "reciprocal":
-            return reciprocal_inverse(z)
-        if t == "power":
-            return power_inverse(z, p)
-        if t == "boxcox":
-            return boxcox_inverse(z, p)
-        if t == "yeojohnson":
-            return yeojohnson_inverse(z, p)
-
-        raise ValueError(f"Unknown transform: {t!r}")
+        """Apply the inverse of the model's response transformation."""
+        try:
+            _, inv = _TRANSFORM_DISPATCH[self.transform]
+        except KeyError:
+            raise ValueError(f"Unknown transform: {self.transform!r}")
+        return inv(z, self.selected_param_)
 
     def fit(self, X: np.ndarray, y: np.ndarray) -> "TransformedOLS":
         """
@@ -745,34 +610,14 @@ class TransformedOLS:
         }
 
 
-# ## 9. Metrics and Diagnostics
-# 
-# Transformation screening should not rely only on visual straightening. The helper functions below report original-scale predictive accuracy and simple residual diagnostics.
-# 
-# The main metrics are
-# 
-# $$
-# \operatorname{RMSE}
-# =
-# \sqrt{\frac{1}{n}\sum_{i=1}^n (y_i-\widehat{y}_i)^2},
-# $$
-# 
-# $$
-# \operatorname{MAE}
-# =
-# \frac{1}{n}\sum_{i=1}^n |y_i-\widehat{y}_i|,
-# $$
-# 
-# and
-# 
-# $$
-# R^2
-# =
-# 1-\frac{\sum_i (y_i-\widehat{y}_i)^2}
-# {\sum_i (y_i-\bar{y})^2}.
-# $$
-
-# In[10]:
+# ---------------------------------------------------------------------------
+# Metrics, residual diagnostics, train/test split, and batch evaluator
+#
+# All metrics are computed on the original response scale so transforms
+# with different inverse maps can be compared directly.  The diagnostics
+# include skew, excess kurtosis, and a |residual|-vs-fitted correlation
+# (a lightweight proxy for heteroscedasticity).
+# ---------------------------------------------------------------------------
 
 
 def regression_metrics(y_true: np.ndarray, y_pred: np.ndarray) -> Dict[str, float]:
@@ -894,21 +739,15 @@ def evaluate_transformed_models(
                 **diags,
             }
         except Exception as exc:
+            # Empty-array calls return the canonical NaN dicts; reuse them
+            # so the error-row schema cannot drift from the success path.
             row = {
                 "model": name,
                 "transform": model.transform,
                 "selected_param_or_lambda": np.nan,
                 "error": str(exc),
-                "n_valid": 0,
-                "rmse": np.nan,
-                "mae": np.nan,
-                "mse": np.nan,
-                "r2": np.nan,
-                "residual_mean": np.nan,
-                "residual_std": np.nan,
-                "residual_skew": np.nan,
-                "residual_excess_kurtosis": np.nan,
-                "corr_abs_resid_fitted": np.nan,
+                **regression_metrics(np.array([]), np.array([])),
+                **residual_diagnostics(np.array([]), np.array([])),
             }
         rows.append(row)
 
@@ -916,15 +755,13 @@ def evaluate_transformed_models(
     return out.sort_values(["rmse", "model"], na_position="last").reset_index(drop=True)
 
 
-# ## 10. Nonlinear regression utilities
+# ---------------------------------------------------------------------------
+# Numerical Jacobian helper used by the nonlinear regressors
 #
-# Direct nonlinear least squares minimizes
-#
-#   SSE(theta) = sum_i (y_i - f(x_i, theta))^2
-#
-# over the parameter vector theta.  The gradient and Jacobian are central to
-# all three optimizers below.  When an analytic Jacobian is unavailable,
-# central finite differences provide a reliable numerical approximation.
+# Direct nonlinear least squares minimizes  SSE(theta) = sum (y_i - f_i)^2
+# over theta.  All three optimizers below need either an analytic Jacobian
+# or this central-finite-difference fallback.
+# ---------------------------------------------------------------------------
 
 
 def numerical_jacobian(
@@ -972,11 +809,26 @@ def numerical_jacobian(
     return J
 
 
-# ## 11. Gradient descent nonlinear regressor
+def _eval_jacobian(
+    model_fn: Callable[[np.ndarray, np.ndarray], np.ndarray],
+    jacobian_fn: Optional[Callable[[np.ndarray, np.ndarray], np.ndarray]],
+    theta: np.ndarray,
+    X: np.ndarray,
+) -> np.ndarray:
+    """Return df/dtheta — the analytic Jacobian if supplied, else central
+    finite differences.  Centralizes the prefer-analytic-then-numerical
+    fallback used by all three nonlinear regressors below."""
+    if jacobian_fn is not None:
+        return jacobian_fn(X, theta)
+    return numerical_jacobian(model_fn, theta, X)
+
+
+# ---------------------------------------------------------------------------
+# Gradient-descent nonlinear regressor
 #
-# Vanilla gradient descent updates theta by stepping opposite the gradient of
-# SSE/n.  An optional multiplicative learning-rate decay reduces the step
-# size over iterations to aid convergence near the minimum.
+# Vanilla GD on SSE/n with an optional multiplicative learning-rate decay.
+# Slow but simple — pedagogical baseline; convergence by relative SSE change.
+# ---------------------------------------------------------------------------
 
 
 @dataclass
@@ -1045,10 +897,7 @@ class GradientDescentRegressor:
 
             for t in range(self.max_iter):
                 r = y - self.model_fn(X, theta)
-                if self.jacobian_fn is not None:
-                    J = self.jacobian_fn(X, theta)
-                else:
-                    J = numerical_jacobian(self.model_fn, theta, X)
+                J = _eval_jacobian(self.model_fn, self.jacobian_fn, theta, X)
 
                 grad = -2.0 * (J.T @ r) / n
                 lr_t = self.learning_rate * (self.decay ** t)
@@ -1107,17 +956,14 @@ class GradientDescentRegressor:
         }
 
 
-# ## 12. Gauss-Newton / Levenberg-Marquardt nonlinear regressor
+# ---------------------------------------------------------------------------
+# Gauss-Newton with self-activating Levenberg-Marquardt damping
 #
-# Gauss-Newton linearizes the residuals around the current theta and solves
-# the resulting linear system for the update delta:
-#
-#   (J^T J + lambda * I) delta = J^T r
-#
-# When lambda = 0 this is pure Gauss-Newton.  If a step increases SSE, the
-# damping coefficient lambda is automatically activated and increased,
-# producing the Levenberg-Marquardt (LM) behavior.  Accepted steps reduce
-# lambda back toward zero, recovering the faster Gauss-Newton convergence.
+# Solves  (J^T J + lam * I) * delta = J^T r  each iteration.  lam = 0 gives
+# pure Gauss-Newton; rejected steps escalate lam toward gradient-descent
+# behavior; accepted steps relax lam back toward 0.  Self-activating, so
+# the user doesn't need to tune lam manually.
+# ---------------------------------------------------------------------------
 
 
 @dataclass
@@ -1189,10 +1035,7 @@ class GaussNewtonRegressor:
 
             for t in range(self.max_iter):
                 r = y - self.model_fn(X, theta)
-                if self.jacobian_fn is not None:
-                    J = self.jacobian_fn(X, theta)
-                else:
-                    J = numerical_jacobian(self.model_fn, theta, X)
+                J = _eval_jacobian(self.model_fn, self.jacobian_fn, theta, X)
 
                 A = J.T @ J           # (p, p) approximate Hessian
                 g = J.T @ r           # (p,)   gradient of -0.5 * SSE
@@ -1261,17 +1104,15 @@ class GaussNewtonRegressor:
         }
 
 
-# ## 13. BFGS quasi-Newton nonlinear regressor
+# ---------------------------------------------------------------------------
+# BFGS quasi-Newton nonlinear regressor
 #
-# BFGS maintains an approximation H to the inverse Hessian of SSE/n and uses
-# it to compute a search direction d = -H g.  After each accepted step the
-# inverse Hessian is updated via the rank-two formula:
-#
-#   H_{k+1} = (I - rho s y^T) H_k (I - rho y s^T) + rho s s^T
-#
-# where s = alpha*d, y = g_{k+1} - g_k, and rho = 1 / (s^T y).
-#
-# The step size alpha is found by backtracking Armijo line search.
+# Maintains an inverse-Hessian approximation H of SSE/n; search direction
+# is d = -H g, step size alpha by backtracking Armijo line search.
+# Inverse-Hessian update (when sy > eps):
+#   H_{k+1} = (I - rho s y^T) H_k (I - rho y s^T) + rho s s^T,
+#   with s = alpha d,  y = g_{k+1} - g_k,  rho = 1 / (s @ y).
+# ---------------------------------------------------------------------------
 
 
 @dataclass
@@ -1319,10 +1160,7 @@ class BFGSRegressor:
     ) -> np.ndarray:
         """Gradient of SSE/n with respect to theta: -2 J^T r / n."""
         r = y - np.asarray(self.model_fn(X, theta), dtype=float).ravel()
-        if self.jacobian_fn is not None:
-            J = self.jacobian_fn(X, theta)
-        else:
-            J = numerical_jacobian(self.model_fn, theta, X)
+        J = _eval_jacobian(self.model_fn, self.jacobian_fn, theta, X)
         return -2.0 * (J.T @ r) / len(y)
 
     def fit(
@@ -1442,17 +1280,18 @@ class BFGSRegressor:
         }
 
 
-# ## 14. ZZU hybrid transformation-to-nonlinear workflow
+# ---------------------------------------------------------------------------
+# ZZU hybrid transformation → nonlinear workflow
 #
-# The ZZU approach combines the two paradigms in three steps:
-#
-#   1. Screen — fit a suite of TransformedOLS models on a validation split and
-#      rank them by RMSE on held-out data.
-#   2. Warm start — convert the best linearized model's coefficients into
-#      initial nonlinear parameters via a user-supplied callable, then refine
-#      with direct nonlinear optimization.
-#   3. Bias correction — store training residuals; optionally subtract their
-#      mean from predictions to remove systematic offset.
+# Three steps:
+#   1. Screen      — fit a suite of TransformedOLS models on a validation
+#                    split, rank by held-out RMSE on the original scale.
+#   2. Warm start  — invert the best linearized model's coefficients to a
+#                    nonlinear theta_init via a user-supplied callable, then
+#                    refine with direct nonlinear optimization.
+#   3. Bias correct — record training residuals; optionally add their mean
+#                    to predictions to remove systematic offset.
+# ---------------------------------------------------------------------------
 
 
 def _default_transformation_suite() -> Dict[str, TransformedOLS]:
@@ -1706,11 +1545,13 @@ class ZZUTransformRegressor:
         }
 
 
-# ## 15. Nonlinear model evaluation helper
+# ---------------------------------------------------------------------------
+# Batch evaluator for nonlinear regressors
 #
-# Mirrors evaluate_transformed_models: fit every regressor in a dict, record
-# metrics and diagnostics, and return a sorted DataFrame.  Models that raise
-# are recorded with an error message rather than stopping the evaluation.
+# Mirrors `evaluate_transformed_models`: fits every regressor in a dict,
+# captures metrics + diagnostics + convergence flags, and records errors
+# instead of crashing on a misbehaving model.
+# ---------------------------------------------------------------------------
 
 
 def evaluate_nonlinear_models(
@@ -1759,22 +1600,17 @@ def evaluate_nonlinear_models(
                 **diags,
             }
         except Exception as exc:
+            # Reuse the NaN dicts from the metric helpers (empty-array
+            # branches) so the error-row schema cannot drift from the
+            # success path.
             row = {
                 "model": name,
                 "method": type(model).__name__,
                 "converged": False,
                 "n_iter": 0,
                 "error": str(exc),
-                "n_valid": 0,
-                "rmse": np.nan,
-                "mae": np.nan,
-                "mse": np.nan,
-                "r2": np.nan,
-                "residual_mean": np.nan,
-                "residual_std": np.nan,
-                "residual_skew": np.nan,
-                "residual_excess_kurtosis": np.nan,
-                "corr_abs_resid_fitted": np.nan,
+                **regression_metrics(np.array([]), np.array([])),
+                **residual_diagnostics(np.array([]), np.array([])),
             }
         rows.append(row)
 
