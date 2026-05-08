@@ -210,11 +210,11 @@ def evaluate_costs_for_split(
     # overhead pays for itself in faster nonlinear convergence.
     if spec["zzu_coeff_to_init"] is not None and spec["zzu_transformations"]:
         warm_theta = None
-        for tname, tmodel in spec["zzu_transformations"].items():
+        for transformation_name, transformation_model in spec["zzu_transformations"].items():
             try:
-                tmodel.fit(X_tr, y_tr)
+                transformation_model.fit(X_tr, y_tr)
                 warm_theta = np.asarray(
-                    spec["zzu_coeff_to_init"](tmodel), dtype=float
+                    spec["zzu_coeff_to_init"](transformation_model), dtype=float
                 ).ravel()
                 break
             except Exception:

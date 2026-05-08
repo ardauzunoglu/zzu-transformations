@@ -111,16 +111,16 @@ def _common_split(spec, seed):
 
 def evaluate_zzu(dataset, spec, method, kwargs, seed):
     """ZZU + this inner optimizer.  Times the entire screen+warm-start fit."""
-    X_tr, X_te, y_tr, y_te = _common_split(spec, seed)
-    zzu = _build_zzu(spec, X_tr, y_tr, method, kwargs)
+    X_train, X_test, y_train, y_test = _common_split(spec, seed)
+    zzu = _build_zzu(spec, X_train, y_train, method, kwargs)
 
     t0 = time.perf_counter()
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", RuntimeWarning)
-        zzu.fit(X_tr, y_tr)
+        zzu.fit(X_train, y_train)
         try:
-            pred = zzu.predict(X_te)
-            rmse = float(ta.regression_metrics(y_te, pred)["rmse"])
+            pred = zzu.predict(X_test)
+            rmse = float(ta.regression_metrics(y_test, pred)["rmse"])
         except Exception:
             rmse = float("nan")
     fit_time = time.perf_counter() - t0

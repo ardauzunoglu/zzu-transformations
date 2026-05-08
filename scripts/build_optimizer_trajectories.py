@@ -107,25 +107,25 @@ def bfgs_path(theta0, max_iter=40, tol=1e-8, c1=1e-4):
     path = [np.array(theta0, dtype=float)]
     theta = path[0].copy()
     H = np.eye(2)
-    g = grad(theta)
+    gradient = grad(theta)
     for _ in range(max_iter):
-        if np.linalg.norm(g) < tol:
+        if np.linalg.norm(gradient) < tol:
             break
-        d = -H @ g
-        gd_dot = float(g @ d)
+        direction = -H @ gradient
+        gd_dot = float(gradient @ direction)
         # Backtracking Armijo line search.
         alpha = 1.0
         f0 = sse(theta)
         for _ in range(60):
-            if sse(theta + alpha * d) <= f0 + c1 * alpha * gd_dot:
+            if sse(theta + alpha * direction) <= f0 + c1 * alpha * gd_dot:
                 break
             alpha *= 0.5
         else:
             break
-        s = alpha * d
+        s = alpha * direction
         theta_new = theta + s
-        g_new = grad(theta_new)
-        ydiff = g_new - g
+        gradient_new = grad(theta_new)
+        ydiff = gradient_new - gradient
         sy = float(s @ ydiff)
         if sy > 1e-12:
             rho = 1.0 / sy
@@ -134,7 +134,7 @@ def bfgs_path(theta0, max_iter=40, tol=1e-8, c1=1e-4):
                  + rho * np.outer(s, s))
             H = 0.5 * (H + H.T)
         theta = theta_new
-        g = g_new
+        gradient = gradient_new
         path.append(theta.copy())
     return np.array(path)
 

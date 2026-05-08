@@ -94,13 +94,13 @@ def plot_original_fits(out_path: Path) -> None:
         order = np.argsort(x)
         suite = fresh_transforms()
 
-        for c, tname in enumerate(transforms_keys):
+        for c, transformation_name in enumerate(transforms_keys):
             ax = axes[r, c]
             ax.scatter(x, y, s=14, alpha=0.45, color=GRAY, label="observed")
             ax.plot(x[order], bundle.y_true.values[order],
                     "--", color="black", lw=1.4, label="true signal")
 
-            model = suite[tname]
+            model = suite[transformation_name]
             try:
                 with warnings.catch_warnings():
                     warnings.simplefilter("ignore")
@@ -108,11 +108,11 @@ def plot_original_fits(out_path: Path) -> None:
                     yhat = model.predict(x.reshape(-1, 1))
                 rmse = ta.regression_metrics(y, yhat)["rmse"]
                 ax.plot(x[order], yhat[order],
-                        color=TRANSFORM_COLORS[tname], lw=2.2,
-                        label=f"{tname} fit")
+                        color=TRANSFORM_COLORS[transformation_name], lw=2.2,
+                        label=f"{transformation_name} fit")
                 # Annotate RMSE and selected λ if Box-Cox.
                 lam = model.selected_param_
-                if tname == "boxcox" and lam is not None and np.isfinite(lam):
+                if transformation_name == "boxcox" and lam is not None and np.isfinite(lam):
                     note = f"RMSE = {rmse:.3g}\nλ = {lam:.2f}"
                 else:
                     note = f"RMSE = {rmse:.3g}"
@@ -126,7 +126,7 @@ def plot_original_fits(out_path: Path) -> None:
                         va="center", color=RED_HEX)
 
             if r == 0:
-                ax.set_title(tname, fontsize=12, color=NAVY_HEX, fontweight="bold")
+                ax.set_title(transformation_name, fontsize=12, color=NAVY_HEX, fontweight="bold")
             if c == 0:
                 ax.set_ylabel(f"{dname}\n\ny",
                               fontsize=10, color=NAVY_HEX)
@@ -170,15 +170,15 @@ def plot_transformed_scale(out_path: Path) -> None:
         fontsize=14, color=NAVY_HEX, fontweight="bold",
     )
 
-    for r, (dname, bundle) in enumerate(datasets):
+    for r, (dataset_name, bundle) in enumerate(datasets):
         x = bundle.X.iloc[:, 0].values
         y = bundle.y.values
         order = np.argsort(x)
         suite = fresh_transforms()
 
-        for c, tname in enumerate(transforms_keys):
+        for c, transformation_name in enumerate(transforms_keys):
             ax = axes[r, c]
-            model = suite[tname]
+            model = suite[transformation_name]
             try:
                 with warnings.catch_warnings():
                     warnings.simplefilter("ignore")
@@ -192,10 +192,10 @@ def plot_transformed_scale(out_path: Path) -> None:
 
                 ax.scatter(x, z, s=14, alpha=0.5, color=GRAY)
                 ax.plot(x[order], z_hat[order],
-                        color=TRANSFORM_COLORS[tname], lw=2.2)
+                        color=TRANSFORM_COLORS[transformation_name], lw=2.2)
 
                 lam = model.selected_param_
-                if tname == "boxcox" and lam is not None and np.isfinite(lam):
+                if transformation_name == "boxcox" and lam is not None and np.isfinite(lam):
                     note = f"$R^2$ = {r2:.3f}\nλ = {lam:.2f}"
                 else:
                     note = f"$R^2$ = {r2:.3f}"
@@ -209,9 +209,9 @@ def plot_transformed_scale(out_path: Path) -> None:
                         va="center", color=RED_HEX)
 
             if r == 0:
-                ax.set_title(labels[tname], fontsize=12, color=NAVY_HEX)
+                ax.set_title(labels[transformation_name], fontsize=12, color=NAVY_HEX)
             if c == 0:
-                ax.set_ylabel(f"{dname}\n\nT(y)",
+                ax.set_ylabel(f"{dataset_name}\n\nT(y)",
                               fontsize=10, color=NAVY_HEX)
             ax.set_xlabel("x")
             ax.grid(alpha=0.3)
@@ -251,9 +251,9 @@ def plot_residuals(out_path: Path) -> None:
         y = bundle.y.values
         suite = fresh_transforms()
 
-        for c, tname in enumerate(transforms_keys):
+        for c, transformation_name in enumerate(transforms_keys):
             ax = axes[r, c]
-            model = suite[tname]
+            model = suite[transformation_name]
             try:
                 with warnings.catch_warnings():
                     warnings.simplefilter("ignore")
@@ -264,7 +264,7 @@ def plot_residuals(out_path: Path) -> None:
 
                 ax.axhline(0, color="black", lw=0.8, alpha=0.6)
                 ax.scatter(x, resid, s=14, alpha=0.6,
-                           color=TRANSFORM_COLORS[tname])
+                           color=TRANSFORM_COLORS[transformation_name])
 
                 # Quick diagnostic: correlation of |resid| with x
                 # — large |corr| signals heteroscedasticity.
@@ -281,7 +281,7 @@ def plot_residuals(out_path: Path) -> None:
                         va="center", color=RED_HEX)
 
             if r == 0:
-                ax.set_title(labels[tname], fontsize=12, color=NAVY_HEX)
+                ax.set_title(labels[transformation_name], fontsize=12, color=NAVY_HEX)
             if c == 0:
                 ax.set_ylabel(f"{dname}\n\nresidual",
                               fontsize=10, color=NAVY_HEX)

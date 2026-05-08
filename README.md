@@ -54,7 +54,7 @@ zzu-transformations/
 
 ### `transformation_algorithms.py`
 
-The library is organized into 15 sections. Sections 1–9 cover transformation-based OLS (completed first); Sections 10–15 add the nonlinear baselines and ZZU hybrid.
+The library is organized into 15 sections. Sections 1–9 cover transformation-based OLS, and Sections 10–15 add the nonlinear baselines and ZZU hybrid.
 
 #### Transformation-based OLS (Sections 1–9)
 
@@ -221,6 +221,9 @@ python test.py
 # Full benchmark: 11 transformed-OLS variants + GD/GN/BFGS + ZZU
 # across all 5 datasets, 10 train/test splits each
 python run_comparison.py
+
+# Generate synthetic dataset figures in ./synthetic_visualizations
+python visualize_synthetic_data.py
 ```
 
 `test.py` prints, for the exponential multiplicative dataset (n=120):
@@ -401,7 +404,7 @@ is used. This is exactly the diagnostic-guided spirit of the workflow.
 
 | Property | Value |
 |----------|-------|
-| Observations | 1 030 |
+| Observations | 1030 |
 | Predictors | cement, blast furnace slag, fly ash, water, superplasticizer, coarse aggregate, fine aggregate, age |
 | Target | Compressive strength (MPa) |
 | Range | ~2.3 – 82.6 MPa (~36× ratio) |
@@ -424,7 +427,7 @@ X_zzu = [ log(cement/water),  log(age),  slag,  fly_ash,  superplasticizer ]
 
 ### Model
 
-Functional form (Abrams' Law core + additive supplements for zero-inflated features):
+Functional form:
 
 ```
 y = exp( θ₀ + θ₁·log(cement/water) + θ₂·log(age)
@@ -454,23 +457,6 @@ Evaluation: 10 random 80/20 seeds, test RMSE and R² reported as mean ± std.
 - **Gauss-Newton cold** struggles more than BFGS cold because the Jacobian is ill-conditioned early in the search when starting far from the optimum.
 
 The concrete experiment illustrates the core ZZU thesis on real data: when a good linearization exists, screening identifies it automatically and the warm start cuts optimizer cost; when zero-inflated or otherwise unlinearizable terms are present, the nonlinear refinement step recovers what the screened OLS cannot represent.
-
----
-
-## Progress
-
-| Task | Status |
-|------|--------|
-| Finalize scope, choose dataset, references | Done |
-| Transformation baselines (Box-Cox, YJ, log, reciprocal, power, smearing) | Done |
-| 2D toy examples (exponential multiplicative & additive) | Done |
-| Synthetic multivariable dataset (`multivariable_nonlinear`) | Done |
-| Nonlinear baselines: gradient descent, Gauss-Newton, BFGS | Done |
-| ZZU hybrid workflow | Done |
-| Full comparison on synthetic suite (`run_comparison.py`) | Done |
-| Notebook integration (`ZZU_main_with_py_imports.ipynb`) | In progress |
-| Real-world dataset application | Upcoming |
-| Final report / presentation | Upcoming |
 
 ---
 
