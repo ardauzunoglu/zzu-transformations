@@ -1,0 +1,29 @@
+# Core — required for the synthetic pipeline
+# (algorithms.py, toy_data.py, run_comparison.py, cost_analysis.py,
+#  zzu_inner_method_comparison.py, build_*_figures.py, visualize_*.py)
+numpy>=1.24
+pandas>=2.0
+matplotlib>=3.7
+
+# Tests
+pytest>=7.0
+
+# Notebook execution
+# (pipeline_walkthrough.ipynb and the real-world notebooks)
+jupyter>=1.0
+ipython>=8.0
+
+# Optional — nicer label de-overlap on the cost-Pareto plots.
+# scripts/cost_analysis.py falls back to fixed offsets if missing.
+adjustText>=1.0
+
+# Optional — real-world notebooks only (concrete_analysis.ipynb,
+# bike_analysis.ipynb).  Used as a baseline regressor
+# (sklearn.ensemble.RandomForestRegressor).  Skip if you only run
+# the synthetic pipeline.
+scikit-learn>=1.3
+
+# NOTE: SciPy is intentionally NOT a dependency.  Every algorithm in
+# scripts/algorithms.py (BFGS, Gauss-Newton with LM damping, profile-
+# likelihood Box-Cox / Yeo-Johnson, Duan smearing) is implemented in
+# pure NumPy.
