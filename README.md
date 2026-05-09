@@ -408,6 +408,8 @@ is used. This is exactly the diagnostic-guided spirit of the workflow.
 
 ## Real-World Dataset Evaluation
 
+### Concrete Strength Dataset — Real-World Engineering System
+
 `concrete_analysis.ipynb` applies the full ZZU workflow to the **UCI Concrete Compressive Strength** dataset (UCI ML Repository #165): 1 030 laboratory mix-design records, 8 predictors, target in MPa.
 
 ### Dataset
@@ -431,7 +433,7 @@ Two domain-motivated features are added before fitting:
 
 The nonlinear model uses log-transformed inputs to align the screening step with the nonlinear parameterisation:
 
-```
+```python
 X_zzu = [ log(cement/water),  log(age),  slag,  fly_ash,  superplasticizer ]
 ```
 
@@ -439,7 +441,7 @@ X_zzu = [ log(cement/water),  log(age),  slag,  fly_ash,  superplasticizer ]
 
 Functional form:
 
-```
+```python
 y = exp( θ₀ + θ₁·log(cement/water) + θ₂·log(age)
              + θ₃·slag + θ₄·fly_ash + θ₅·SP )
 ```
@@ -459,14 +461,131 @@ Because the model is log-linear in the transformed inputs, the ZZU screening ste
 
 Evaluation: 10 random 80/20 seeds, test RMSE and R² reported as mean ± std.
 
+### Boundary Testing: Initialization Sensitivity, Convergence Stability, and ZZU Warm-Start Robustness
+
+Beyond predictive accuracy, we investigated the optimization boundaries of the ZZU framework through targeted robustness experiments:
+
+- random cold-start sensitivity analysis;
+- convergence-rate comparisons;
+- local parameter perturbation experiments;
+- and initialization stability studies.
+
+Fifty random BFGS initializations were compared against the ZZU warm-start initialization derived from transformation screening. The experiments revealed a strongly multimodal optimization landscape:
+
+- a stable high-quality basin near the ZZU initialization;
+- and several poor basins associated with unstable parameter growth and degraded RMSE.
+
+Key observations:
+
+- ZZU consistently initialized optimization inside the stable basin;
+- successful random starts converged to nearly the same parameter vector as ZZU;
+- many random cold starts converged to poor local regions with dramatically worse RMSE;
+- ZZU reduced both convergence variance and optimizer iterations.
+
+Local perturbation experiments further showed that the ZZU solution remained highly stable under small initialization perturbations, but optimization quality deteriorated as perturbation magnitude increased. This suggests that the ZZU warm-start identifies a robust local region even when the overall nonlinear landscape is sensitive to initialization.
+
+These experiments support an important interpretation of the ZZU framework:
+
+> ZZU primarily improves optimization stability and convergence reliability rather than fundamentally changing the optimum itself.
+
+The concrete dataset therefore serves not only as a predictive benchmark, but also as a controlled environment for studying nonlinear optimization behavior and warm-start robustness.
+
 ### Key Findings
 
 - **ZZU warm-start vs cold-start**: because the model is exactly log-linear, the screened init lands near the SSE optimum; `zzu_bfgs` consistently converges in fewer iterations than `bfgs_cold` and achieves lower or equal test RMSE.
 - **Linearized OLS alone** (`log_smear`) is a strong baseline given the near-log-linear structure, but the additive supplement terms for zero-inflated features are not captured by the linear model, leaving residual error that the nonlinear optimizer corrects.
 - **Box-Cox** (`boxcox_smear`) offers no advantage over `log_smear` here: profile-likelihood selects λ ≈ 0 (the log), confirming the log transform is appropriate.
 - **Gauss-Newton cold** struggles more than BFGS cold because the Jacobian is ill-conditioned early in the search when starting far from the optimum.
+- **Boundary-testing experiments** showed that initialization quality strongly affects nonlinear convergence behavior, and that the ZZU screening stage substantially improves optimization stability.
 
 The concrete experiment illustrates the core ZZU thesis on real data: when a good linearization exists, screening identifies it automatically and the warm start cuts optimizer cost; when zero-inflated or otherwise unlinearizable terms are present, the nonlinear refinement step recovers what the screened OLS cannot represent.
+
+---
+
+### Bike Sharing Dataset — Testing the Structural Boundaries of ZZU
+
+`bike_analysis.ipynb` evaluates ZZU on the **UCI Bike Sharing Dataset** using the hourly bike-rental records. This dataset was intentionally selected to investigate the structural boundaries of transformation-based modeling under interaction-heavy and regime-switching real-world behavior.
+
+### Dataset Characteristics
+
+| Property | Value |
+|----------|-------|
+| Observations | 17 379 |
+| Granularity | Hourly |
+| Target | Bike rentals per hour (`cnt`) |
+| Key predictors | hour, weekday, workingday, weather, temperature, humidity |
+| Behavioral structure | commuting peaks, weekends, weather regimes, nighttime inactivity |
+
+Unlike the concrete dataset, bike-rental demand is not governed by one dominant smooth physical law. Instead, demand is driven by multiple interacting behavioral systems:
+- morning and evening commute peaks;
+- weekday versus weekend usage;
+- weather-dependent activity;
+- seasonal and temporal regime changes.
+
+Exploratory analysis showed strong interaction structure:
+- hourly demand is highly multi-modal;
+- the effect of hour changes depending on working-day status;
+- temperature effects vary across time-of-day;
+- no single predictor exhibits dominant global correlation with the target.
+
+### Experimental Goal
+
+The purpose of this experiment was not simply predictive benchmarking, but rather:
+
+> to investigate how ZZU behaves when the underlying data-generating process is interaction-heavy, piecewise, and only partially compatible with global response transformations.
+
+### Methods Compared
+
+| Method | Family |
+|--------|--------|
+| `identity_ols` | Linearized OLS |
+| `log_smear` | Linearized OLS |
+| `boxcox_smear` | Linearized OLS |
+| `bfgs_cold` | Nonlinear cold |
+| `random_forest` | Tree ensemble |
+| `zzu_bfgs` | ZZU hybrid |
+
+The nonlinear ZZU model used a globally log-linear structure:
+
+```python
+y = exp( θ₀ + Xθ )
+```
+
+so that the screening step remained mathematically compatible with the nonlinear parameterisation.
+
+### Findings and Boundary Analysis
+
+The Bike Sharing dataset exposed an important structural limitation of global transformation-based modeling.
+
+Key observations:
+
+- ZZU converged reliably and stably across random seeds;
+- warm-start initialization remained numerically well-behaved;
+- ZZU outperformed several purely linearized baselines;
+- however, interaction-heavy methods such as Random Forest substantially outperformed all global transformed models.
+
+The experiments suggest that the Bike Sharing dataset behaves more like a collection of local behavioral regimes than one globally transformable system. Tree ensembles naturally partition the feature space into localized regions such as:
+- commuting hours;
+- weekend afternoons;
+- nighttime low-demand periods;
+- weather-dependent activity states.
+
+This local partitioning structure aligns strongly with the dataset dynamics.
+
+In contrast, the ZZU workflow assumes that some transformation of the response can reveal an approximately global smooth structure suitable for nonlinear refinement. The Bike Sharing dataset partially violates this assumption because:
+- interactions dominate over global trends;
+- behavior changes conditionally across regimes;
+- and the response surface behaves piecewise rather than smoothly.
+
+Importantly, the experiment demonstrated that:
+- ZZU remained stable and convergent;
+- but the practical benefit of warm-starting diminished relative to datasets with cleaner global structure.
+
+This experiment therefore helped characterize the operational boundary of the ZZU framework:
+
+> ZZU is most effective when transformed global structure exists, and becomes less informative when the system is dominated by localized interaction regimes.
+
+Rather than treating this as a simple success/failure benchmark, the Bike Sharing study served as a diagnostic stress test for understanding where transformation-guided nonlinear optimization is most appropriate.
 
 ---
 
