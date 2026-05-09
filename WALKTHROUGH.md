@@ -37,6 +37,8 @@ This is a quick map of the repo, where we show what each main file or folder is 
 
 ## Notebooks
 
+- [pipeline_walkthrough.ipynb](pipeline_walkthrough.ipynb): Head-to-tail synthetic pipeline. Generates the five datasets, renders the pedagogical figures, runs the main accuracy benchmark, the cost analysis, the ZZU inner-method ablation, and four stress-test studies (noise sensitivity, convergence rate, init robustness, sample-size sensitivity). Outputs land in `notebook_outputs/` so the canonical folders are untouched.
+
 - [concrete_analysis.ipynb](concrete_analysis.ipynb): Real-world concrete dataset analysis. Run to reproduce Figure 4 from the report.
 
 - [bike_analysis.ipynb](bike_analysis.ipynb): Real-world bike-sharing dataset analysis.
@@ -62,4 +64,5 @@ This is a quick map of the repo, where we show what each main file or folder is 
 - `toy_data.py` creates the synthetic problems.
 - `run_comparison.py`, `cost_analysis.py`, and `zzu_inner_method_comparison.py` are the main experiments.
 - `comparison_results/` and `synthetic_visualizations/` hold the outputs.
-- The notebooks show the workflow on real datasets.
+- `pipeline_walkthrough.ipynb` runs the whole synthetic pipeline end-to-end in one place.
+- The other notebooks show the workflow on real datasets.
