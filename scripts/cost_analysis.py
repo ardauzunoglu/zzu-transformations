@@ -423,7 +423,7 @@ def plot_warm_vs_cold(raw: pd.DataFrame, out_path: Path) -> None:
         mean_time=("fit_time_sec", "mean"),
     ).reset_index()
 
-    fig, axes = plt.subplots(1, 3, figsize=(13, 4), constrained_layout=True)
+    fig, axes = plt.subplots(1, 3, figsize=(14, 4.5), constrained_layout=True)
     metrics = [
         ("mean_iter", "iterations"),
         ("mean_calls", "model_fn calls"),
@@ -444,13 +444,13 @@ def plot_warm_vs_cold(raw: pd.DataFrame, out_path: Path) -> None:
         )
         ax.set_ylabel(label)
         ax.set_xlabel("")
-        ax.set_title(f"BFGS cold vs warm-start: {label}")
+        ax.set_title(label)
         ax.tick_params(axis="x", rotation=30)
         ax.grid(axis="y", alpha=0.3)
 
     fig.suptitle(
-        "Cold init = data-driven heuristic;  warm = ZZU's transformation-derived theta",
-        fontsize=10,
+        "BFGS cold vs warm-start — cold = data-driven heuristic; warm = ZZU's transformation-derived θ",
+        fontsize=11,
     )
     fig.savefig(out_path, dpi=130)
     plt.close(fig)
