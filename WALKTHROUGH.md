@@ -15,14 +15,14 @@ This is a quick map of the repo, where we show what each main file or folder is 
 
 ## Benchmark Scripts
 
-- [scripts/run_comparison.py](scripts/run_comparison.py): Main benchmark across synthetic datasets.
+- [run_comparison.py](scripts/run_comparison.py): Main benchmark across synthetic datasets.
   Result: writes summary CSVs and plots into [comparison_results](comparison_results). Run to reproduce Figure 2 from the report.
 
 - [scripts/cost_analysis.py](scripts/cost_analysis.py): Cost/efficiency analysis.
   Result: compares RMSE against fit time, iterations, and model evaluations. Run to reproduce Figure 1 from the report.
 
 - [scripts/zzu_inner_method_comparison.py](scripts/zzu_inner_method_comparison.py): Inner-optimizer ablation.
-  Result: compares pure optimizers against ZZU plus the same optimizer. Run to reproduce Figure 3 from the report.
+  Result: compares pure optimizers against ZZU plus the same optimizer. Run to reproduce Figure 4 from the report.
 
 ## Visualization Scripts
 
@@ -39,9 +39,9 @@ This is a quick map of the repo, where we show what each main file or folder is 
 
 - [pipeline_walkthrough.ipynb](pipeline_walkthrough.ipynb): Head-to-tail synthetic pipeline. Generates the five datasets, renders the pedagogical figures, runs the main accuracy benchmark, the cost analysis, the ZZU inner-method ablation, and four stress-test studies (noise sensitivity, convergence rate, init robustness, sample-size sensitivity). Outputs land in `notebook_outputs/` so the canonical folders are untouched.
 
-- [concrete_analysis.ipynb](concrete_analysis.ipynb): Real-world concrete dataset analysis. Run to reproduce Figure 4 from the report.
+- [concrete_analysis.ipynb](concrete_analysis.ipynb): Real-world concrete dataset analysis. Run to reproduce Figure 3 from the report.
 
-- [bike_analysis.ipynb](bike_analysis.ipynb): Real-world bike-sharing dataset analysis.
+- [bike_analysis.ipynb](bike_analysis.ipynb): Real-world bike-sharing dataset analysis. Run to reproduce Figure 5 from the report.
 
 ## Output Folders
 
