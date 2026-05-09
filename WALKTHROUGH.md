@@ -39,9 +39,9 @@ This is a quick map of the repo, where we show what each main file or folder is 
 
 - [pipeline_walkthrough.ipynb](pipeline_walkthrough.ipynb): Head-to-tail synthetic pipeline. Generates the five datasets, renders the pedagogical figures, runs the main accuracy benchmark, the cost analysis, the ZZU inner-method ablation, and four stress-test studies (noise sensitivity, convergence rate, init robustness, sample-size sensitivity). Outputs land in `notebook_outputs/` so the canonical folders are untouched.
 
-- [concrete_analysis.ipynb](concrete_analysis.ipynb): Real-world concrete dataset analysis. Run to reproduce Figure 3 from the report.
+- [concrete_analysis.ipynb](concrete_analysis.ipynb): Real-world concrete-dataset analysis. Includes the boundary-testing study (initialization sensitivity, convergence stability, ZZU warm-start robustness). Reproduces Figure 3 from [ZZU_Final_Report.tex](ZZU_Final_Report.tex).
 
-- [bike_analysis.ipynb](bike_analysis.ipynb): Real-world bike-sharing dataset analysis. Run to reproduce Figure 5 from the report.
+- [bike_analysis.ipynb](bike_analysis.ipynb): Real-world bike-sharing analysis. Stress-tests ZZU against an interaction-heavy, regime-switching dataset to characterize where transformation-guided nonlinear optimization stops paying off. Reproduces Figure 5 from [ZZU_Final_Report.tex](ZZU_Final_Report.tex).
 
 ## Output Folders
 
@@ -50,8 +50,7 @@ This is a quick map of the repo, where we show what each main file or folder is 
 
 - [synthetic_visualizations](synthetic_visualizations): Synthetic dataset figures.
 
-- [datasets](datasets): Input data.
-  Result: synthetic CSVs plus real-world datasets used by the notebooks.
+- [datasets](datasets): Input data. Real-world inputs (`concrete.csv`, `bike_sharing_dataset/`) live at the top level; synthetic CSVs live under [datasets/synthetic_datasets/](datasets/synthetic_datasets).
 
 ## Tests
 

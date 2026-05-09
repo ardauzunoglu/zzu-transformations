@@ -5,7 +5,8 @@
 **Authors:** Alvin Zhang · Wynn Zhao · Arda Uzunoglu  
 **Course project, April–May 2026**
 
-Please refer to [WALKTHROUGH.md](WALKTHROUGH.md) for reproducing our results presented in the report.
+Please refer to [WALKTHROUGH.md](WALKTHROUGH.md) for reproducing our results presented in the report ([ZZU_Final_Report.tex](ZZU_Final_Report.tex)).
+
 ---
 
 ## Overview
@@ -33,7 +34,7 @@ zzu-transformations/
 │   ├── visualize_synthetic_data.py     # Per-dataset PNGs + 2x2 overview
 │   ├── build_linearization_figures.py  # 3 pedagogical figures on transforms
 │   └── build_optimizer_trajectories.py # SSE-surface contour + GD/GN/BFGS paths
-├── tests/                          # 158 pytest cases across 7 modules
+├── tests/                          # 112 pytest cases across 7 modules
 ├── pipeline_walkthrough.ipynb      # Head-to-tail synthetic pipeline (recommended entry point)
 ├── concrete_analysis.ipynb         # Real-world: UCI Concrete Compressive Strength
 ├── bike_analysis.ipynb             # Real-world: UCI Bike Sharing
@@ -51,7 +52,14 @@ zzu-transformations/
 │   ├── synthetic_datasets/         #   CSV exports of the five synthetic datasets
 │   ├── concrete.csv                #   UCI Concrete Compressive Strength
 │   └── bike_sharing_dataset/       #   UCI Bike Sharing
-└── synthetic_visualizations/       # Per-dataset PNGs (output of visualize_synthetic_data.py)
+├── notebook_outputs/               # Sandbox dir written by pipeline_walkthrough.ipynb
+├── notebook_outputs_gt/            # Reference (ground-truth) copy of notebook outputs
+├── reproduce/                      # Pre-computed outputs for offline review
+├── synthetic_visualizations/       # Per-dataset PNGs (output of visualize_synthetic_data.py)
+├── ZZU_Final_Report.tex            # LaTeX source of the project write-up
+├── WALKTHROUGH.md                  # Repository map and reproduction guide
+├── requirements.txt                # Pinned core dependencies
+└── pytest.ini                      # pytest configuration
 ```
 
 ---
@@ -412,7 +420,7 @@ is used. This is exactly the diagnostic-guided spirit of the workflow.
 
 `concrete_analysis.ipynb` applies the full ZZU workflow to the **UCI Concrete Compressive Strength** dataset (UCI ML Repository #165): 1 030 laboratory mix-design records, 8 predictors, target in MPa.
 
-### Dataset
+#### Dataset
 
 | Property | Value |
 |----------|-------|
@@ -424,7 +432,7 @@ is used. This is exactly the diagnostic-guided spirit of the workflow.
 
 The response is right-skewed; a log transform substantially reduces skewness. Age exhibits near-log-linear growth in strength, motivating a power-law time term. The dominant strength driver is the water/cement ratio (Abrams' Law, 1919).
 
-### Feature Engineering
+#### Feature Engineering
 
 Two domain-motivated features are added before fitting:
 
@@ -437,7 +445,7 @@ The nonlinear model uses log-transformed inputs to align the screening step with
 X_zzu = [ log(cement/water),  log(age),  slag,  fly_ash,  superplasticizer ]
 ```
 
-### Model
+#### Model
 
 Functional form:
 
@@ -448,7 +456,7 @@ y = exp( θ₀ + θ₁·log(cement/water) + θ₂·log(age)
 
 Because the model is log-linear in the transformed inputs, the ZZU screening step fits `log(y) ~ X_zzu` via OLS and the warm-start inversion is exact: `θ_init = beta_` directly.
 
-### Methods Compared
+#### Methods Compared
 
 | Method | Family | Description |
 |--------|--------|-------------|
@@ -461,7 +469,7 @@ Because the model is log-linear in the transformed inputs, the ZZU screening ste
 
 Evaluation: 10 random 80/20 seeds, test RMSE and R² reported as mean ± std.
 
-### Boundary Testing: Initialization Sensitivity, Convergence Stability, and ZZU Warm-Start Robustness
+#### Boundary Testing: Initialization Sensitivity, Convergence Stability, and ZZU Warm-Start Robustness
 
 Beyond predictive accuracy, we investigated the optimization boundaries of the ZZU framework through targeted robustness experiments:
 
@@ -490,7 +498,7 @@ These experiments support an important interpretation of the ZZU framework:
 
 The concrete dataset therefore serves not only as a predictive benchmark, but also as a controlled environment for studying nonlinear optimization behavior and warm-start robustness.
 
-### Key Findings
+#### Key Findings
 
 - **ZZU warm-start vs cold-start**: because the model is exactly log-linear, the screened init lands near the SSE optimum; `zzu_bfgs` consistently converges in fewer iterations than `bfgs_cold` and achieves lower or equal test RMSE.
 - **Linearized OLS alone** (`log_smear`) is a strong baseline given the near-log-linear structure, but the additive supplement terms for zero-inflated features are not captured by the linear model, leaving residual error that the nonlinear optimizer corrects.
@@ -506,7 +514,7 @@ The concrete experiment illustrates the core ZZU thesis on real data: when a goo
 
 `bike_analysis.ipynb` evaluates ZZU on the **UCI Bike Sharing Dataset** using the hourly bike-rental records. This dataset was intentionally selected to investigate the structural boundaries of transformation-based modeling under interaction-heavy and regime-switching real-world behavior.
 
-### Dataset Characteristics
+#### Dataset Characteristics
 
 | Property | Value |
 |----------|-------|
@@ -528,13 +536,13 @@ Exploratory analysis showed strong interaction structure:
 - temperature effects vary across time-of-day;
 - no single predictor exhibits dominant global correlation with the target.
 
-### Experimental Goal
+#### Experimental Goal
 
 The purpose of this experiment was not simply predictive benchmarking, but rather:
 
 > to investigate how ZZU behaves when the underlying data-generating process is interaction-heavy, piecewise, and only partially compatible with global response transformations.
 
-### Methods Compared
+#### Methods Compared
 
 | Method | Family |
 |--------|--------|
@@ -553,7 +561,7 @@ y = exp( θ₀ + Xθ )
 
 so that the screening step remained mathematically compatible with the nonlinear parameterisation.
 
-### Findings and Boundary Analysis
+#### Findings and Boundary Analysis
 
 The Bike Sharing dataset exposed an important structural limitation of global transformation-based modeling.
 
