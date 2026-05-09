@@ -15,7 +15,7 @@ This is a quick map of the repo, where we show what each main file or folder is 
 
 ## Benchmark Scripts
 
-- [run_comparison.py](scripts/run_comparison.py): Main benchmark across synthetic datasets.
+- [scripts/run_comparison.py](scripts/run_comparison.py): Main benchmark across synthetic datasets.
   Result: writes summary CSVs and plots into [comparison_results](comparison_results). Run to reproduce Figure 2 from the report.
 
 - [scripts/cost_analysis.py](scripts/cost_analysis.py): Cost/efficiency analysis.

@@ -43,6 +43,8 @@ plt.rcParams.update({
     "figure.titlesize": 20,
 })
 
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import scripts.algorithms as ta
 import toy_data as td
@@ -51,7 +53,6 @@ import toy_data as td
 from reproducibility import N_SEEDS, TEST_FRACTION, reproduce_dir
 
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
 OUTPUT_DIR = reproduce_dir("comparison_results", PROJECT_ROOT)
 
 # Set this to a list of dataset names to run a subset, for example:
