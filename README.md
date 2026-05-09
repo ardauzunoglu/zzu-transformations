@@ -34,7 +34,7 @@ zzu-transformations/
 │   ├── build_linearization_figures.py  # 3 pedagogical figures on transforms
 │   └── build_optimizer_trajectories.py # SSE-surface contour + GD/GN/BFGS paths
 ├── tests/                          # 158 pytest cases across 7 modules
-├── ZZU_main_with_py_imports.ipynb  # Main experiment notebook
+├── pipeline_walkthrough.ipynb      # Head-to-tail synthetic pipeline (recommended entry point)
 ├── concrete_analysis.ipynb         # Real-world: UCI Concrete Compressive Strength
 ├── bike_analysis.ipynb             # Real-world: UCI Bike Sharing
 ├── comparison_results/             # Outputs of run_comparison.py + cost_analysis.py +
@@ -47,14 +47,11 @@ zzu-transformations/
 │   ├── cost_summary.csv            #   mean cost metrics per (dataset, method)
 │   ├── cost_pareto.png             #   RMSE vs fit-time Pareto (log-log)
 │   └── warm_vs_cold.png            #   BFGS warm-start vs cold-start comparison
-├── generated_datasets/             # CSV exports of all five synthetic datasets
-│   ├── exponential_multiplicative.csv
-│   ├── exponential_additive.csv
-│   ├── michaelis_menten.csv
-│   ├── logistic_growth.csv
-│   └── multivariable_nonlinear.csv
-├── synthetic_visualizations/       # Per-dataset PNGs (output of visualize_synthetic_data.py)
-└── main (2).tex                    # Project write-up (LaTeX)
+├── datasets/                       # Input data
+│   ├── synthetic_datasets/         #   CSV exports of the five synthetic datasets
+│   ├── concrete.csv                #   UCI Concrete Compressive Strength
+│   └── bike_sharing_dataset/       #   UCI Bike Sharing
+└── synthetic_visualizations/       # Per-dataset PNGs (output of visualize_synthetic_data.py)
 ```
 
 ---
@@ -223,6 +220,8 @@ you know how to invert back to nonlinear parameters; supply
 
 ## Quick Start
 
+The fastest path to reproducing the synthetic-side results is the [pipeline_walkthrough.ipynb](pipeline_walkthrough.ipynb) notebook — it generates the five datasets, renders all pedagogical figures, runs the main accuracy benchmark, the cost analysis, the ZZU inner-method ablation, and four stress-test studies in one place (~3–6 minutes end-to-end). Outputs land in `notebook_outputs/` so the canonical folders stay untouched. The script entry points below remain available for running individual stages from the command line.
+
 ```bash
 # Sanity check: all three optimizers + ZZU on one dataset
 python tests/test.py
@@ -315,7 +314,7 @@ and `rmse_by_method.png` for a visual ranking.
 
 ## Cost Analysis
 
-Run `python cost_analysis.py` to instrument every fit with wall-clock time,
+Run `python scripts/cost_analysis.py` to instrument every fit with wall-clock time,
 optimizer iterations, and model-function evaluations (the latter captures
 Jacobian work, since numerical Jacobian calls `model_fn` 2p times per
 Jacobian). Outputs land in `comparison_results/`.

@@ -26,3 +26,4 @@ reproduce/
 generated_datasets/
 synthetic_visualizations/
 notebook_outputs_gt/
+notebook_outputs/
