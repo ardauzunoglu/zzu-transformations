@@ -1,0 +1,226 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=0.85in]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{amsmath, amssymb}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{array}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{enumitem}
+\usepackage[numbers,sort&compress]{natbib}
+\usepackage{graphicx}
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue!55!black,
+    citecolor=blue!55!black,
+    urlcolor=blue!55!black
+}
+
+\setlength{\parskip}{0.45em}
+\setlength{\parindent}{0pt}
+\setlist[itemize]{leftmargin=1.5em, itemsep=0.15em, topsep=0.15em}
+\renewcommand{\arraystretch}{1.12}
+
+\title{\vspace{-2.5em}\textbf{Zhang--Zhao--Uzunoglu Transformations:\\ When to Linearize and When to Optimize Nonlinearly}}
+\author{Alvin Zhang \and Wynn Zhao \and Arda Uzunoglu}
+\date{Introduction to Computational Mathematics, Spring 2026}
+
+\begin{document}
+\maketitle
+\vspace{-3.0em}
+
+\section{Problem and Motivation}
+\label{intro}
+Many data-fitting problems involve nonlinear relationships, such as exponential growth, saturation, logistic growth, and engineering response surfaces. A common strategy is to transform the response, fit $T(y)=X\beta+\varepsilon$ by OLS, and back-transform predictions \cite{BoxCox1964,YeoJohnson2000,CarrollRuppert1988}. This is fast and closed-form, but it optimizes a transformed-scale objective rather than original-scale error. Moreover, nonlinear inversion can introduce retransformation bias since $\mathbb{E}[T^{-1}(\widehat{z})]\neq T^{-1}(\mathbb{E}[\widehat{z})])$ \cite{Duan1983,CarrollRuppert1988}. As an alternative, direct nonlinear regression minimizes original-scale error,
+$\min_{\theta}\sum_{i=1}^{n}(y_i-f(x_i;\theta))^2$, matching the evaluation metric but introducing sensitivity to initialization, conditioning, convergence, and local minima \cite{BatesWatts1988,NocedalWright2006}.
+
+\textbf{Research Delta.} We therefore introduce Zhang--Zhao--Uzunoglu (ZZU) transformations, which aim to preserve the stability and diagnostic value of transformation-based OLS while using that information to initialize nonlinear least-squares optimization on the original response scale. Accordingly, ZZU turns linearization from a final modeling choice into a validated initialization mechanism for nonlinear least squares. The central contribution is a three-stage hybrid workflow. First, candidate response transformations are screened on a held-out validation split using original-scale RMSE. Second, the best compatible transformed model is converted into a model-specific nonlinear warm start. Third, the resulting nonlinear fit is adjusted with a post-hoc residual correction on the original response scale. We draw inspiration from Bates and Watts, who note that linearized estimates can be useful starting values for nonlinear regression \cite{BatesWatts1988}. ZZU extends this insight into a reproducible pipeline by adding transformation selection, a coefficient-to-parameter initialization framework, and bias correction after nonlinear modeling.
+
+\section{Algorithms and Methodology}
+We implement transformation-based OLS, direct nonlinear least squares, and ZZU in a reproducible NumPy/Pandas/Matplotlib codebase, with nonlinear models written directly in NumPy. The implementation is available at \url{https://github.com/ardauzunoglu/zzu-transformations}.
+
+\subsection{Transformation-Based OLS}
+\label{subsec_lin}
+The first modeling family fits ordinary least squares after transforming the response variable. In this approach, we choose a transformation \(T\), fit $T(y) = X\beta + \varepsilon,$
+and then invert the fitted values back to the original scale through $T^{-1}$. This gives a fast and deterministic baseline with closed-form solution.
+
+We consider six transformation families. The identity transformation, $T(y)=y$, gives the ordinary OLS baseline. The logarithmic transformation, $T(y)=\log(y)$ for $y>0$, is appropriate for positive responses and is especially useful when the mean relationship is exponential with multiplicative noise. The reciprocal transformation, $T(y)=1/y$ for $y\neq 0$, is useful for saturating relationships such as Michaelis--Menten curves. The power-scale transformation, $T_p(y)=y^p$ for $y>0$, provides a simple parametric family for positive responses. Box--Cox generalizes the power transformation by selecting a parameter $\lambda$ using profile likelihood \cite{BoxCox1964}, where $T_\lambda(y)=(y^\lambda-1)/\lambda$ for $\lambda\neq 0$ and $T_0(y)=\log(y)$ for $y>0$. Yeo--Johnson plays a similar role while also allowing zero or negative responses \cite{YeoJohnson2000}.
+For log-scale models, we address retransformation bias using Duan's smearing correction \cite{Duan1983}. If \(e_i\) are log-scale residuals, then $\widehat{y}_{\text{smear}}
+=
+\exp(x^T\widehat{\beta})
+\cdot
+\frac{1}{n}\sum_{i=1}^{n}\exp(e_i).$
+This avoids assuming a parametric residual distribution.
+
+\subsection{Direct Nonlinear Least Squares}
+The second modeling family fits the nonlinear model directly on the original response scale. Given a model \(f(x;\theta)\), the optimizer minimizes $\min_{\theta}
+    \sum_{i=1}^{n}
+    \left(y_i - f(x_i;\theta)\right)^2.$
+This objective matches the original-scale RMSE used in evaluation, but the optimization problem is no longer closed form. Its performance depends on the starting parameter vector, conditioning of the local least-squares problem, and the reliability of the update rule.
+
+We compare three nonlinear optimizers. Gradient descent is included as a first-order baseline. It updates parameters using the numerical gradient of the sum of squared errors and supports a capped iteration budget with optional learning-rate decay. Gauss--Newton uses a finite-difference Jacobian and solves a damped normal equation,$(J^T J + \lambda I)\delta = J^T r,$
+where the damping term plays a Levenberg--Marquardt-style stabilizing role when \(J^T J\) is ill-conditioned \cite{Levenberg1944,Marquardt1963,BatesWatts1988}. BFGS is implemented as a quasi-Newton method with inverse-Hessian updates and a backtracking Armijo line search \cite{Broyden1970,Fletcher1970,Goldfarb1970,Shanno1970,NocedalWright2006}. Each method takes a model function, an initial parameter vector, and returns predictions on the original response scale. Each method also records convergence diagnostics, including the final parameters, iteration count, convergence flag, and any fitting error. This shared interface allows the same experiment runner to compare cold-start nonlinear fits and ZZU warm-started fits under identical conditions.
+
+\subsection{The ZZU Hybrid}
+The third modeling family is the Zhang--Zhao--Uzunoglu hybrid (ZZU). ZZU is designed for the settings where transformed OLS is computationally stable but may optimize the wrong scale, while direct nonlinear least squares optimizes the right scale but may fail without a good initialization. The central idea is to use transformed OLS as a diagnostic and initialization tool rather than as the final model.
+
+ZZU has three stages:
+\begin{enumerate}[leftmargin=1.5em, itemsep=0.3em, topsep=0.3em]
+    \item \textbf{Screen candidate transformations.}
+    ZZU first fits a dictionary of transformed-OLS models (from \S\ref{subsec_lin}) on a training split and evaluates them on a held-out validation split. The models are ranked by validation RMSE after predictions are returned to the original response scale. This detail is important because the selected transformation is not chosen only for transformed-space fit or residual normality. It is chosen for predictive performance on the scale that the final model is evaluated on. After the best transformation is selected, that transformed model is refit on the full training data.
+
+    \item \textbf{Convert the selected linearization into a nonlinear warm start.}
+    ZZU then converts the coefficients of the selected transformed model into an initial nonlinear parameter vector \(\theta_0\). This step is model-specific, so the implementation requires a user-supplied \texttt{coeff\_to\_init} map. For example, if the nonlinear model is $y = a\exp(bx),
+    $
+    then the log-linearized form is $\log(y) = \beta_0 + \beta_1 x.$
+    The corresponding initialization is $
+        a_0 = \exp(\beta_0),
+        \qquad
+        b_0 = \beta_1.
+    $
+    The candidate transformations must be restricted to transformations whose fitted coefficients can be meaningfully converted into the parameters of the nonlinear model. If the conversion fails, ZZU falls back to a user-provided initialization when available. Otherwise, it uses a default vector and records the failure in the model summary.
+
+    \item \textbf{Refine with nonlinear least squares and correct on the original scale.}
+    Starting from \(\theta_0\), ZZU fits the nonlinear model using one of the implemented nonlinear optimizers. In our experiments, the base optimizer can be gradient descent, Gauss--Newton, or BFGS. After nonlinear refinement, ZZU computes the mean training residual on the original response scale,
+    $
+        \bar{r}
+        =
+        \frac{1}{n}\sum_{i=1}^{n}
+        \left(y_i - f(x_i;\widehat{\theta})\right).
+    $
+    At prediction time, it applies the additive correction
+    $
+        \widehat{y}_{\text{ZZU}}(x)
+        =
+        f(x;\widehat{\theta}) + \bar{r}.
+    $
+    This final step is intentionally performed after nonlinear optimization and on the original response scale. It is separate from Duan smearing, which is used for log-scale transformed OLS.
+\end{enumerate}
+
+Overall, ZZU transfers information from a validated linearization into nonlinear optimization, improving robustness when the selected transformation contains useful structural information.
+
+\section{Experiments and Results}
+\label{experiments}
+We evaluate the methods in two settings, synthetic benchmarks and a real-world benchmark. The synthetic benchmarks are designed to isolate specific modeling failure modes where the true data-generating structure is known. The real-world benchmark tests whether the same conclusions hold in a noisy applied dataset where the correct functional form is unknown. Across experiments, we compare transformed OLS, cold-start nonlinear least squares, and ZZU warm-started nonlinear least squares using test RMSE and \(R^2\). We prioritize RMSE as the primary evaluation metric because the main methodological question is whether the method improves prediction on the original response scale.
+
+\subsection{Synthetic Benchmarks}
+
+The synthetic setting contains five datasets: multiplicative-noise exponential, additive-noise exponential, Michaelis--Menten saturation, logistic growth, and multivariable nonlinear response. The multiplicative-noise exponential dataset is the favorable case for log-linearization because the log transform matches both the mean structure and the noise structure. The additive-noise exponential dataset uses the same exponential mean curve but changes the noise model, which tests whether a correct-looking linearization can still optimize the wrong objective. The Michaelis--Menten dataset tests reciprocal linearization on a saturating response curve. The logistic-growth dataset tests a setting where there is no simple reliable response-only linearization without additional structural information. The multivariable nonlinear dataset tests whether a single global transformation of \(y\) can handle a response generated by several different nonlinear components.
+
+Each synthetic dataset is evaluated over 10 random train-test splits. For every split, we fit the same families of transformed OLS models, cold-start nonlinear optimizers, and ZZU hybrids. The transformed OLS methods are evaluated after back-transformation to the original response scale. The nonlinear methods are evaluated directly on the original scale. This design allows us to separate three effects: whether the transformation matches the noise structure, whether nonlinear least squares improves original-scale accuracy, and whether ZZU improves optimization through better initialization.
+
+\paragraph{Results.}
+Figures~\ref{fig:synthetic_pareto}--\ref{fig:synthetic_rmse} summarize a subset of the synthetic benchmark results on the original response scale.\footnote{We show this subset for brevity and provide the remaining benchmark results in our GitHub repository. These cases illustrate settings where i) ZZU is not the best performer (Exponential Multiplicative), ii) ZZU achieves the best RMSE (Logistic Growth), and iii) the task contains multidimensional nonlinear structure.} In the multiplicative exponential benchmark, log-type transformed OLS, nonlinear least squares, and ZZU all cluster near the lowest RMSE, while mismatched transformations such as reciprocal and high-power transformations perform much worse. The log and smearing-corrected variants achieve nearly the same error as nonlinear solvers at substantially lower fitting cost. In contrast, the logistic growth benchmark shows that response-only transformations cannot recover the nonlinear S-shaped mean curve. Accordingly, identity, Yeo--Johnson, and reciprocal linearizations have much larger RMSE, whereas Gauss--Newton, BFGS, and ZZU reach the lowest-error region. The multivariable nonlinear benchmark is intermediate between prior two, since nonlinear and ZZU methods perform best, while simple response transformations improve over the weakest linearized methods but cannot fully capture the multidimensional nonlinear structure.
+
+\paragraph{Discussion.}
+Overall, the synthetic results show that the best method depends on whether linearization preserves the original-scale prediction objective. When it does, as in the multiplicative exponential case, transformed OLS is accurate and computationally efficient. When it does not, as in the logistic benchmark, transformed OLS optimizes an inadequate surrogate objective and nonlinear least squares is necessary. The multivariable benchmark lies between these cases, where transformations reduce some curvature but cannot replace a nonlinear model. Figure~\ref{fig:synthetic_pareto} also shows that RMSE should be interpreted alongside fitting cost. Closed-form transformed OLS is fastest when structurally appropriate, while Gauss--Newton and BFGS are typically much faster than gradient descent when their local approximations are well conditioned. ZZU adds screening and refinement overhead, but Figure~\ref{fig:zzu_inner} suggests that this cost is modest relative to slow cold-start optimization and useful when initialization robustness matters.
+
+\begin{figure}
+    \centering
+    \includegraphics[width=\linewidth]{figs/cost_pareto.png}
+    \caption{Cost--accuracy Pareto comparison for the representative synthetic benchmarks. Each marker reports test RMSE and fitting time for one method, where lower-left points are preferable. Colors distinguish transformed OLS, cold-start nonlinear least squares, and the ZZU hybrid.}
+    \label{fig:synthetic_pareto}
+\end{figure}
+
+\begin{figure}
+    \centering
+    \includegraphics[width=\linewidth]{figs/rmse_by_method.png}
+    \caption{Synthetic benchmark test RMSE by method, averaged over 10 random train-test splits. Error bars show split-to-split variability. Lower bars indicate better prediction on the original response scale.}
+    \label{fig:synthetic_rmse}
+\end{figure}
+
+\subsection{Concrete Compressive Strength}
+
+The real-world benchmark uses the UCI Concrete Compressive Strength dataset \cite{UCIConcrete}. This dataset contains concrete mix-design variables such as cement, water, aggregates, age, and admixture quantities, with compressive strength as the response. It is an important test case because the relationship is nonlinear, physically meaningful, and noisy, but it does not come with a known closed-form regression model. It also includes zero-inflated covariates such as slag, fly ash, and superplasticizer, which makes naive logarithmic or power transformations of all variables inappropriate. We use the same evaluation principle as in the synthetic experiments. All methods are trained and tested on the same 10 random train-test splits, with 80\% and 20\% ratio respectively. The preprocessing adds domain-motivated features, including water/cement ratio and total binder content. 
+
+\begin{figure}
+    \centering
+    \includegraphics[width=\linewidth]{concrete.png}
+    \caption{Concrete compressive-strength test RMSE over 10 random 80/20 train-test splits. Bar labels report mean RMSE and the corresponding split-to-split uncertainty.}
+    \label{fig:concrete_rmse}
+\end{figure}
+
+\paragraph{Results.}
+Figure~\ref{fig:concrete_rmse} reports the concrete benchmark RMSE. The strongest average results come from the linearized baselines, since Identity OLS and Box--Cox with smearing both achieve RMSEs of \(7.25\). The next group consists of cold-start Gauss--Newton and ZZU--BFGS, both near \(7.60\). Log with smearing is somewhat worse at about \(8.74\). The major failure case is cold-start BFGS, whose RMSE is \(35.67\).
+
+\paragraph{Discussion.}
+The concrete results support a more cautious interpretation of ZZU. Unlike the synthetic benchmarks, the concrete dataset does not provide a known parametric nonlinear mean function. Once domain-motivated features such as water/cement ratio and total binder are included, a linear model on the original scale is already highly competitive. The comparable performance of Identity OLS and Box--Cox also suggests that much of the predictable structure in this feature set can be captured without aggressive nonlinear transformation. At the same time, the cold-start BFGS result shows why initialization still matters. BFGS performs very poorly when started from an uninformed parameter vector, while ZZU--BFGS reduces the RMSE from roughly \(35.67\) to roughly \(7.60\). In this sense, ZZU succeeds at its main algorithmic goal, where it prevents a catastrophic nonlinear optimization failure by replacing a cold start with an informed warm start. However, ZZU does not outperform the best transformed or linear baselines on this dataset.
+
+\section{Analysis}
+
+\subsection{Isolating the Gains of ZZU}
+
+The results in \S\ref{experiments} compare ZZU with transformed OLS and direct nonlinear models. To isolate the ZZU warm-start effect, we now compare each nonlinear model with and without ZZU integration.
+
+As shown in Figure~\ref{fig:zzu_inner}, the improvement ZZU brings is problem-dependent. In the multiplicative exponential benchmark, pure nonlinear models and ZZU variants have nearly identical RMSE, so the warm start adds little because the problem is already easy to fit. In logistic growth, ZZU with Gauss--Newton or BFGS reaches the lowest RMSE region, while gradient descent remains weaker even with ZZU. This suggests that good initialization helps most when paired with a model that can exploit the local curvature. In the multivariable nonlinear benchmark, ZZU slightly improves all three nonlinear models, showing that the screened linearization contains useful structure even when it cannot fully linearize the response. However, ZZU adds transformation-screening overhead, especially for fast models such as Gauss--Newton and BFGS. Thus, ZZU is best viewed as an initialization and stability strategy rather than a universally superior nonlinear model. It is most useful when cold-start fitting is sensitive, and less useful when the pure nonlinear model already converges reliably.
+
+\begin{figure}
+    \centering
+    \includegraphics[width=\linewidth]{figs/zzu_inner_method.png}
+    \caption{Effect of the nonlinear inner optimizer inside ZZU. The top panel compares test RMSE, while the bottom panel compares fitting time.}
+    \label{fig:zzu_inner}
+\end{figure}
+
+\section{Takeaways and Limitations}
+\paragraph{Takeaways.} Based on our experiments, we find that the relative performance of transformation-based OLS and direct nonlinear least squares  depends on whether the transformation preserves the original modeling goal and whether the nonlinear optimizer can be initialized reliably.
+
+\begin{itemize}
+    \item \textbf{Linearization is conditionally powerful.} Transformed OLS works best when the transformation matches both the mean and the noise structure. The multiplicative-noise exponential experiment is the clearest example, since log-linearization produces an accurate model at low computational cost.
+
+    \item \textbf{Original-scale fitting matters when the transformed objective is misaligned.} When the response transformation changes the effective loss function, transformed OLS can fit well on the transformed scale while performing worse on the original scale. The additive-noise exponential and multivariable nonlinear benchmarks show that direct nonlinear least squares can outperform linearization when RMSE on the original response scale is the evaluation target.
+
+    \item \textbf{ZZU is most useful as an initialization and robustness strategy.} ZZU is not meant to guarantee the best test error in every setting. Its value is that it uses validated linearization to construct informed warm starts for nonlinear optimization. This helps when the screened transformation contains useful structural information, as in the logistic and multivariable benchmarks, and it can prevent catastrophic nonlinear failures, as in the concrete experiment.
+\end{itemize}
+
+\paragraph{Limitation.} The main limitation is that the current ZZU workflow always trusts the selected transformation enough to use it for initialization. Future work should gate ZZU with a confidence signal, such as transformed-scale residual normality. If the signal is weak, the algorithm should skip warm-starting and use a cold nonlinear fit instead. Additional future work includes more baseline methods, more high-dimensional and noisy synthetic settings, and a broader set of real-world regression datasets.
+
+\begin{thebibliography}{99}
+\setlength{\itemsep}{0.1em}
+
+\bibitem{BatesWatts1988}
+Bates, D. M., and Watts, D. G. \textit{Nonlinear Regression Analysis and Its Applications}. Wiley, 1988.
+
+\bibitem{BoxCox1964}
+Box, G. E. P., and Cox, D. R. ``An analysis of transformations.'' \textit{Journal of the Royal Statistical Society: Series B}, 26(2):211--243, 1964.
+
+\bibitem{Broyden1970}
+Broyden, C. G. ``The convergence of a class of double-rank minimization algorithms 1. General considerations.'' \textit{IMA Journal of Applied Mathematics}, 6(1):76--90, 1970.
+
+\bibitem{CarrollRuppert1988}
+Carroll, R. J., and Ruppert, D. \textit{Transformation and Weighting in Regression}. Chapman and Hall/CRC, 1988.
+
+\bibitem{Duan1983}
+Duan, N. ``Smearing estimate: A nonparametric retransformation method.'' \textit{Journal of the American Statistical Association}, 78(383):605--610, 1983.
+
+\bibitem{Fletcher1970}
+Fletcher, R. ``A new approach to variable metric algorithms.'' \textit{The Computer Journal}, 13(3):317--322, 1970.
+
+\bibitem{Goldfarb1970}
+Goldfarb, D. ``A family of variable-metric methods derived by variational means.'' \textit{Mathematics of Computation}, 24(109):23--26, 1970.
+
+\bibitem{Levenberg1944}
+Levenberg, K. ``A method for the solution of certain non-linear problems in least squares.'' \textit{Quarterly of Applied Mathematics}, 2:164--168, 1944.
+
+\bibitem{Marquardt1963}
+Marquardt, D. W. ``An algorithm for least-squares estimation of nonlinear parameters.'' \textit{Journal of the Society for Industrial and Applied Mathematics}, 11(2):431--441, 1963.
+
+\bibitem{NocedalWright2006}
+Nocedal, J., and Wright, S. J. \textit{Numerical Optimization}. 2nd ed., Springer, 2006.
+
+\bibitem{Shanno1970}
+Shanno, D. F. ``Conditioning of quasi-Newton methods for function minimization.'' \textit{Mathematics of Computation}, 24(111):647--656, 1970.
+
+\bibitem{Yeh1998}
+Yeh, I.-C. ``Modeling of strength of high-performance concrete using artificial neural networks.'' \textit{Cement and Concrete Research}, 28(12):1797--1808, 1998.
+
+\bibitem{UCIConcrete}
+UCI Machine Learning Repository. ``Concrete Compressive Strength.'' University of California, Irvine. \url{https://archive.ics.uci.edu/dataset/165/concrete+compressive+strength}.
+
+\bibitem{YeoJohnson2000}
+Yeo, I.-K., and Johnson, R. A. ``A new family of power transformations to improve normality or symmetry.'' \textit{Biometrika}, 87(4):954--959, 2000.
+\end{thebibliography}
+
+\end{document}
